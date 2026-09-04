@@ -175,10 +175,18 @@ jobs:
           done
 
       - name: Images must declare a healthcheck
+        # Use the json form. `{{.Config.Healthcheck}}` renders the Go struct
+        # without field names - "{[CMD-SHELL ...] 15s 4s 45s 0s 3}" - so
+        # grepping it for "Test" can never match, and the check would fail even
+        # on an image that does declare a HEALTHCHECK.
         run: |
           for image in cloudops/control-plane:ci cloudops/demo-service:ci; do
-            docker image inspect "$image" --format '{{.Config.Healthcheck}}' | grep -q Test \
-              || { echo "::error::$image has no HEALTHCHECK"; exit 1; }
+            hc="$(docker image inspect "$image" --format '{{json .Config.Healthcheck}}')"
+            if [ -z "$hc" ] || [ "$hc" = "null" ]; then
+              echo "::error::$image has no HEALTHCHECK"
+              exit 1
+            fi
+            echo "$image declares a healthcheck"
           done
 
       - name: Report image sizes
