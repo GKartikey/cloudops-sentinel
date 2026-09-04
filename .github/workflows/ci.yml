@@ -413,7 +413,7 @@ jobs:
         run: docker load < /tmp/images.tar.gz
 
       - name: Scan the control plane image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cloudops/control-plane:ci
           format: sarif
@@ -427,7 +427,7 @@ jobs:
           exit-code: "0"
 
       - name: Scan the repository for misconfiguration and secrets
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -439,7 +439,7 @@ jobs:
       - name: Fail on any committed secret
         # This one IS a hard failure. A leaked credential is not a "triage
         # later" finding, and unlike a base-image CVE it is always actionable.
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -448,7 +448,12 @@ jobs:
           exit-code: "1"
 
       - name: Upload SARIF to code scanning
+        # Not allowed to fail the build. Whether this succeeds depends on the
+        # repository having code scanning enabled, which is an account setting
+        # rather than anything about the code. The gate that actually matters -
+        # the secret scan above - is a hard failure and is unaffected.
         if: always()
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: .
