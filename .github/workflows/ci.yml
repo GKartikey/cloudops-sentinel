@@ -508,28 +508,46 @@ jobs:
           sbom: true
           cache-from: type=gha,scope=control-plane
 
+      - name: Derive demo service tags
+        id: meta-demo
+        # Uses metadata-action rather than interpolating github.repository
+        # directly. A container registry requires a LOWERCASE repository name,
+        # and a GitHub owner can contain capitals - "GKartikey/cloudops-sentinel"
+        # produces an invalid tag and the push fails. metadata-action lowercases
+        # it, which is why the control plane above worked and a hand-built tag
+        # here did not.
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/demo-service
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest
+            type=raw,value=1.0.0
+
       - name: Push the demo service
         uses: docker/build-push-action@v6
         with:
           context: ./services/demo-service
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ github.repository }}/demo-service:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ github.repository }}/demo-service:latest
+          tags: ${{ steps.meta-demo.outputs.tags }}
+          labels: ${{ steps.meta-demo.outputs.labels }}
           provenance: true
           sbom: true
           cache-from: type=gha,scope=demo-service
 
       - name: Summarise the release
         run: |
+          # Lowercased, because that is the reference that actually exists in
+          # the registry - see the note on metadata-action above.
+          repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           {
             echo "### CloudOps Sentinel published"
             echo ""
             echo "| Field | Value |"
             echo "|---|---|"
             echo "| Commit | \`${GITHUB_SHA}\` |"
-            echo "| Control plane | \`${REGISTRY}/${GITHUB_REPOSITORY}/control-plane:${GITHUB_SHA}\` |"
-            echo "| Demo service | \`${REGISTRY}/${GITHUB_REPOSITORY}/demo-service:${GITHUB_SHA}\` |"
+            echo "| Control plane | \`${REGISTRY}/${repo}/control-plane:${GITHUB_SHA}\` |"
+            echo "| Demo service | \`${REGISTRY}/${repo}/demo-service:${GITHUB_SHA}\` |"
             echo ""
             echo "Verified end to end before publishing: unit tests, container build,"
             echo "live incident detection, Kubernetes security assertions, image scan."
