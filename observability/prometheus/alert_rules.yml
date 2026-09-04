@@ -1,0 +1,192 @@
+# Prometheus alerting and recording rules
+# ---------------------------------------------------------------------------
+# These are the SAME conditions the control plane evaluates in config/rules.yaml,
+# expressed in PromQL. Keeping both is the point of the exercise: it shows the
+# rules are a portable statement of intent rather than something locked inside
+# one application. If you already run Prometheus, delete the control plane's
+# alerting and use these; if you do not, the control plane covers you.
+#
+# Every alert carries a severity label (routing), a summary (what happened) and
+# a runbook (what to do). An alert without a runbook is a 3am guessing game.
+
+groups:
+
+  # ---------------------------------------------------------- recording rules
+  # Recording rules pre-compute expensive expressions so dashboards read a
+  # single cheap series instead of re-running the aggregation on every refresh.
+  - name: cloudops.recording
+    interval: 30s
+    rules:
+      - record: cloudops:fleet_cpu:mean
+        expr: avg(cloudops_resource_cpu_utilization_percent)
+
+      - record: cloudops:fleet_error_rate:mean
+        expr: avg(cloudops_resource_error_rate_ratio)
+
+      - record: cloudops:cost_monthly:by_provider
+        expr: sum by (provider) (cloudops_resource_estimated_cost_monthly_usd)
+
+      - record: cloudops:waste_ratio
+        expr: |
+          sum(cloudops_resource_estimated_waste_monthly_usd)
+            / clamp_min(sum(cloudops_resource_estimated_cost_monthly_usd), 1)
+
+      - record: cloudops:demo_error_rate:ratio5m
+        expr: |
+          sum by (service) (rate(demo_requests_failed_total[5m]))
+            / clamp_min(sum by (service) (rate(demo_requests_total[5m])), 0.001)
+
+  # ------------------------------------------------------------- reliability
+  - name: cloudops.reliability
+    rules:
+      - alert: TargetDown
+        # `up` is synthesised by Prometheus itself for every scrape, so this
+        # fires even when the target is too broken to emit anything at all -
+        # which is precisely when you most need to hear about it.
+        expr: up{job=~"cloudops.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} target {{ $labels.instance }} is down"
+          description: "Prometheus has been unable to scrape this target for over a minute."
+          runbook_url: "docs/RUNBOOK.md#target-down"
+
+      - alert: HighCpuUtilization
+        expr: cloudops_resource_cpu_utilization_percent > 85
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU above 85% on {{ $labels.name }}"
+          description: "{{ $labels.name }} ({{ $labels.provider }}/{{ $labels.region }}) has been CPU-saturated for 2 minutes."
+          runbook_url: "docs/RUNBOOK.md#high-cpu"
+
+      - alert: CriticalCpuUtilization
+        expr: cloudops_resource_cpu_utilization_percent > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CPU above 95% on {{ $labels.name }}"
+          runbook_url: "docs/RUNBOOK.md#high-cpu"
+
+      - alert: HighMemoryUtilization
+        expr: cloudops_resource_memory_utilization_percent > 90
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory above 90% on {{ $labels.name }}"
+          description: "An OOM kill is the likely next event. Check for a leak before raising the limit."
+          runbook_url: "docs/RUNBOOK.md#memory-leak"
+
+      - alert: HighErrorRate
+        expr: cloudops_resource_error_rate_ratio > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} is failing {{ $value | humanizePercentage }} of requests"
+          runbook_url: "docs/RUNBOOK.md#error-burst"
+
+      - alert: LatencySLOBreach
+        expr: cloudops_resource_request_latency_p95_milliseconds > 800
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency {{ $value | humanize }}ms on {{ $labels.name }}"
+          runbook_url: "docs/RUNBOOK.md#latency"
+
+      - alert: ContainerRestartLoop
+        # increase() over a window, NOT the raw counter. Alerting on a counter's
+        # absolute value produces an alert that can never resolve.
+        expr: increase(cloudops_resource_restart_count[10m]) > 2
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.name }} restarted {{ $value | humanize }} times in 10 minutes"
+          runbook_url: "docs/RUNBOOK.md#crash-loop"
+
+      - alert: DemoServiceErrorBudgetBurn
+        # Multi-window burn rate: a fast burn (5m) confirmed by a slower one
+        # (1h). Requiring both is what stops a 90-second blip from paging while
+        # still catching a genuine sustained regression quickly.
+        expr: |
+          (cloudops:demo_error_rate:ratio5m > 0.05)
+          and
+          (
+            sum by (service) (rate(demo_requests_failed_total[1h]))
+              / clamp_min(sum by (service) (rate(demo_requests_total[1h])), 0.001)
+          ) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} is burning its error budget"
+          description: "Error rate is elevated in both the 5-minute and 1-hour windows."
+          runbook_url: "docs/RUNBOOK.md#error-burst"
+
+  # --------------------------------------------------------- self-monitoring
+  - name: cloudops.meta
+    rules:
+      - alert: CollectorStalled
+        # The monitoring system monitoring itself. Without this, the failure
+        # mode is silence - and silence looks exactly like "everything is fine".
+        expr: time() - cloudops_last_collection_timestamp_seconds > 120
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CloudOps collector has not completed a cycle in over 2 minutes"
+          description: "Dashboards and alerts are now serving stale data. Check the control plane logs."
+          runbook_url: "docs/RUNBOOK.md#collector-stalled"
+
+      - alert: CollectionErrors
+        expr: rate(cloudops_collection_runs_total{outcome="error"}[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Collection ticks are failing"
+          runbook_url: "docs/RUNBOOK.md#collector-stalled"
+
+      - alert: ScrapeFailuresHigh
+        expr: rate(cloudops_scrape_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Repeated scrape failures for {{ $labels.resource }}"
+          runbook_url: "docs/RUNBOOK.md#target-down"
+
+  # ----------------------------------------------------------------- finops
+  # Cost alerts are unusual and deliberately included: waste is a slow incident
+  # that nobody gets paged for, which is exactly why it grows unchecked.
+  - name: cloudops.cost
+    rules:
+      - alert: EstateWasteAboveThreshold
+        expr: cloudops:waste_ratio > 0.30
+        for: 30m
+        labels:
+          severity: warning
+          team: finops
+        annotations:
+          summary: "Over 30% of estate spend is unused capacity"
+          description: "Current waste ratio {{ $value | humanizePercentage }}. Review the recommendations at /api/v1/recommendations."
+          runbook_url: "docs/RUNBOOK.md#cost-spike"
+
+      - alert: MonthlySpendJumped
+        # A step change in the bill, caught in hours instead of on the invoice.
+        expr: |
+          cloudops_fleet_estimated_cost_monthly_usd
+            > 1.25 * avg_over_time(cloudops_fleet_estimated_cost_monthly_usd[6h] offset 6h)
+        for: 30m
+        labels:
+          severity: warning
+          team: finops
+        annotations:
+          summary: "Estimated monthly spend is 25% above the last 6 hours"
+          runbook_url: "docs/RUNBOOK.md#cost-spike"

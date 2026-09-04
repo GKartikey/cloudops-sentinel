@@ -1,0 +1,18 @@
+# Normalise line endings.
+#
+# Everything is stored LF in the repository and checked out LF everywhere. This
+# matters more than it looks: a shell script or an entrypoint with CRLF endings
+# copied into a Linux container fails with "bad interpreter: no such file or
+# directory", which is a confusing way to discover a line-ending problem.
+* text=auto eol=lf
+
+# Scripts that must be LF whatever the platform.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+Makefile    text eol=lf
+
+# Binary: never touch these.
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.ico  binary

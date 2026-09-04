@@ -1,0 +1,78 @@
+# CloudOps Sentinel - Cost Model
+# ---------------------------------------------------------------------------
+# A deliberately simplified, transparent rate card. Numbers are in the right
+# order of magnitude for US East list prices circa 2024 but are NOT a billing
+# source of truth - see docs/COST_MODEL.md for exactly what is and is not
+# modelled. The point is to make the OPTIMISATION LOGIC demonstrable offline.
+#
+# Every rate is USD. HOURLY unless the key says _month.
+
+currency: USD
+hours_per_month: 730
+
+# Regional multipliers applied on top of the base rate.
+region_multipliers:
+  us-east-1: 1.00
+  eastus: 1.00
+  westeurope: 1.12
+  local: 0.00        # local containers cost nothing; shown for completeness
+
+# Per-resource-type rate cards.
+rates:
+
+  virtual_machine:
+    # Charged on provisioned capacity, not on usage - which is precisely why
+    # over-provisioning is expensive and why rightsizing pays.
+    per_vcpu_hour: 0.0415
+    per_gb_ram_hour: 0.0056
+    per_gb_disk_month: 0.088
+
+  kubernetes_node:
+    per_vcpu_hour: 0.0415
+    per_gb_ram_hour: 0.0056
+    per_gb_disk_month: 0.088
+    # Control-plane fee amortised per node (EKS 0.10/hr per cluster, 2 nodes)
+    per_node_hour: 0.0500
+
+  container_workload:
+    # Fargate/ACI-style: billed on the requested vCPU and memory.
+    per_vcpu_hour: 0.04048
+    per_gb_ram_hour: 0.004445
+
+  managed_database:
+    per_vcpu_hour: 0.1180
+    per_gb_ram_hour: 0.0080
+    per_gb_disk_month: 0.115
+    # Managed services carry a service premium over raw compute.
+    service_premium: 1.15
+
+  object_storage:
+    per_gb_month: 0.0230
+    # What the same bytes would cost on a cool/infrequent-access tier.
+    cool_per_gb_month: 0.0125
+    archive_per_gb_month: 0.0018
+
+  serverless_function:
+    per_million_invocations: 0.20
+    per_gb_second: 0.0000166667
+    free_gb_seconds_per_month: 400000
+    free_invocations_per_month: 1000000
+
+  load_balancer:
+    per_hour: 0.0250
+    per_gb_processed: 0.0080
+
+  managed_disk:
+    per_gb_month: 0.1350        # premium SSD
+    standard_per_gb_month: 0.0480
+
+  public_ip:
+    per_hour: 0.0050
+
+# Discount programmes the recommendation engine can reason about.
+commitments:
+  reserved_1yr_discount: 0.28     # ~28% off on-demand for a 1-year RI/savings plan
+  reserved_3yr_discount: 0.46
+  spot_discount: 0.70             # ~70% off for interruptible workloads
+  # A schedule that stops non-prod outside 08:00-20:00 Mon-Fri keeps ~36% of hours
+  business_hours_retention: 0.357

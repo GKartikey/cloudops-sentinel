@@ -1,0 +1,552 @@
+# CloudOps Sentinel - CI/CD
+# ---------------------------------------------------------------------------
+# The pipeline is ordered by how fast a stage can tell you that you are wrong.
+# Lint and unit tests take seconds and run first; the container build takes a
+# minute; the end-to-end stage brings the whole stack up and only then do we
+# consider publishing. Nothing downstream runs if something upstream failed.
+#
+#   lint  ->  test  ->  build  ->  e2e  ->  security  ->  publish (main only)
+#                                     \-> k8s-validate (parallel)
+#
+# Two things worth calling out:
+#   * The e2e job runs the SAME scripts/verify_local.py a developer runs. There
+#     is no CI-only test path that can pass while the real thing is broken.
+#   * Publishing uses GITHUB_TOKEN with a scoped `packages: write` permission
+#     rather than a long-lived PAT stored as a secret. No credential is ever
+#     written into this file, and every job declares the least permission it
+#     needs rather than inheriting the repository default.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Default to read-only. Individual jobs opt into more.
+permissions:
+  contents: read
+
+concurrency:
+  # A new push supersedes the previous run on the same branch. Without this a
+  # busy branch queues builds that are obsolete before they start.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  PYTHON_VERSION: "3.12"
+
+jobs:
+
+  # ------------------------------------------------------------------- lint
+  lint:
+    name: Lint and static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install tooling
+        run: pip install ruff==0.8.4 yamllint==1.35.1
+
+      - name: Ruff (lint)
+        run: ruff check services tests scripts
+
+      - name: Ruff (format)
+        run: ruff format --check services tests scripts
+
+      - name: Validate YAML configuration
+        # The inventory, rate card and alert rules are configuration that the
+        # app refuses to start without. Catching a syntax error here costs
+        # seconds; catching it at container start costs a failed deploy.
+        # Folded scalar: an unquoted `run:` value containing ": " is not a
+        # valid plain YAML scalar and makes the whole workflow unparseable.
+        run: >-
+          yamllint -d "{extends: relaxed, rules: {line-length: disable}}"
+          config k8s observability
+
+      - name: Config files must actually parse and be complete
+        run: |
+          pip install pyyaml
+          python - <<'PY'
+          import sys, yaml, pathlib
+          inv = yaml.safe_load(pathlib.Path("config/inventory.yaml").read_text())
+          pricing = yaml.safe_load(pathlib.Path("config/pricing.yaml").read_text())
+          rules = yaml.safe_load(pathlib.Path("config/rules.yaml").read_text())
+          resources = inv["resources"]
+          assert len(resources) >= 15, "inventory looks truncated"
+          ids = [r["id"] for r in resources]
+          assert len(ids) == len(set(ids)), "duplicate resource ids"
+          # Every resource type in the inventory must have a rate card entry,
+          # or it silently costs $0 and disappears from the FinOps view.
+          missing = {r["type"] for r in resources} - set(pricing["rates"])
+          assert not missing, f"no pricing for resource types: {missing}"
+          for rule in rules["alerting"]["rules"]:
+              assert rule.get("runbook"), f"{rule['name']} has no runbook"
+          print(f"OK: {len(resources)} resources, {len(rules['alerting']['rules'])} alert rules")
+          PY
+
+  # ------------------------------------------------------------------- test
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r services/control-plane/requirements.txt
+          pip install pytest==8.3.4 pytest-cov==6.0.0
+
+      - name: Run tests with coverage
+        run: |
+          python -m pytest tests \
+            --cov=services/control-plane/app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --junitxml=junit.xml -v
+
+      - name: Publish test results
+        # Runs even on failure - a red build with no visible reason is the
+        # worst possible CI experience.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            junit.xml
+            coverage.xml
+          retention-days: 14
+
+  # ------------------------------------------------------------------ build
+  build:
+    name: Build images
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build control plane
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/control-plane
+          load: true
+          tags: cloudops/control-plane:ci
+          # GitHub Actions cache keeps the dependency layer between runs, which
+          # is the difference between a 20-second and a 3-minute build.
+          cache-from: type=gha,scope=control-plane
+          cache-to: type=gha,mode=max,scope=control-plane
+
+      - name: Build demo service
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/demo-service
+          load: true
+          tags: cloudops/demo-service:ci
+          cache-from: type=gha,scope=demo-service
+          cache-to: type=gha,mode=max,scope=demo-service
+
+      - name: Images must not run as root
+        # A container running as root turns any escape into a host compromise.
+        # Asserting it in CI stops a future Dockerfile edit from quietly
+        # regressing the property.
+        run: |
+          for image in cloudops/control-plane:ci cloudops/demo-service:ci; do
+            user=$(docker image inspect "$image" --format '{{.Config.User}}')
+            echo "$image runs as '${user:-root}'"
+            if [ -z "$user" ] || [ "$user" = "root" ] || [ "$user" = "0" ]; then
+              echo "::error::$image runs as root"
+              exit 1
+            fi
+          done
+
+      - name: Images must declare a healthcheck
+        run: |
+          for image in cloudops/control-plane:ci cloudops/demo-service:ci; do
+            docker image inspect "$image" --format '{{.Config.Healthcheck}}' | grep -q Test \
+              || { echo "::error::$image has no HEALTHCHECK"; exit 1; }
+          done
+
+      - name: Report image sizes
+        run: docker images cloudops/* --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+
+      - name: Export images for the e2e job
+        run: |
+          docker save cloudops/control-plane:ci cloudops/demo-service:ci \
+            | gzip > /tmp/images.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-images
+          path: /tmp/images.tar.gz
+          retention-days: 1
+
+  # -------------------------------------------------------------------- e2e
+  e2e:
+    name: End-to-end verification
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: container-images
+          path: /tmp
+
+      - name: Load images
+        run: docker load < /tmp/images.tar.gz
+
+      - name: Retag to the versions compose expects
+        run: |
+          docker tag cloudops/control-plane:ci cloudops/control-plane:1.0.0
+          docker tag cloudops/demo-service:ci cloudops/demo-service:1.0.0
+
+      - name: Create local secrets
+        run: make secrets
+
+      - name: Start the stack
+        run: |
+          docker compose up -d
+          docker compose ps
+
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000/readyz >/dev/null; then
+              echo "ready after ${i} attempt(s)"; exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::control plane never became ready"
+          docker compose logs --tail 100
+          exit 1
+
+      - name: Verify the deployment end to end
+        # The same script a developer runs locally. Includes injecting real
+        # chaos into a real container and asserting the detection path notices.
+        run: python scripts/verify_local.py
+
+      - name: Prometheus exposition must be scrapeable
+        run: |
+          curl -sf http://localhost:8000/metrics -o /tmp/metrics.txt
+          for family in cloudops_resource_cpu_utilization_percent \
+                        cloudops_resource_estimated_cost_monthly_usd \
+                        cloudops_fleet_health_score \
+                        cloudops_collection_runs_total; do
+            grep -q "^# TYPE ${family}" /tmp/metrics.txt \
+              || { echo "::error::missing metric family ${family}"; exit 1; }
+          done
+          echo "$(grep -c '^cloudops_' /tmp/metrics.txt) cloudops series exposed"
+
+      - name: Logs must be valid JSON on stdout
+        # Structured logging is a contract with the log pipeline. If a single
+        # line is not parseable, the shipper drops it and the evidence is gone
+        # exactly when an incident needs it.
+        run: |
+          docker compose logs --no-log-prefix control-plane --tail 200 > /tmp/logs.txt
+          python - <<'PY'
+          import json, sys
+          total = bad = 0
+          for line in open("/tmp/logs.txt", encoding="utf-8", errors="replace"):
+              line = line.strip()
+              if not line or not line.startswith("{"):
+                  continue
+              total += 1
+              try:
+                  record = json.loads(line)
+              except json.JSONDecodeError:
+                  bad += 1
+                  continue
+              for field in ("timestamp", "level", "message", "service"):
+                  if field not in record:
+                      print(f"missing {field}: {line[:120]}")
+                      bad += 1
+                      break
+          print(f"{total} JSON log lines, {bad} malformed")
+          sys.exit(1 if bad or total == 0 else 0)
+          PY
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail 200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  # --------------------------------------------------------- k8s validation
+  k8s-validate:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+
+      - name: Kustomize build must succeed
+        run: kubectl kustomize . > /tmp/rendered.yaml
+
+      - name: Rendered manifests must be schema-valid
+        run: |
+          curl -sSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp
+          /tmp/kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            -schema-location default /tmp/rendered.yaml
+
+      - name: Security posture assertions
+        # These are the properties the SECURITY.md document claims. Asserting
+        # them in CI is the difference between a documented policy and an
+        # enforced one - a future edit that drops runAsNonRoot fails the build.
+        run: |
+          python - <<'PY'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open("/tmp/rendered.yaml")) if d]
+          failures = []
+
+          workloads = [d for d in docs if d["kind"] in ("Deployment", "StatefulSet", "DaemonSet")]
+          assert workloads, "no workloads rendered"
+
+          for w in workloads:
+              name = w["metadata"]["name"]
+              spec = w["spec"]["template"]["spec"]
+              pod_sc = spec.get("securityContext", {})
+              if not pod_sc.get("runAsNonRoot"):
+                  failures.append(f"{name}: pod securityContext.runAsNonRoot is not true")
+              if spec.get("serviceAccountName") in (None, "default"):
+                  failures.append(f"{name}: uses the default ServiceAccount")
+              for c in spec["containers"]:
+                  csc = c.get("securityContext", {})
+                  if csc.get("allowPrivilegeEscalation") is not False:
+                      failures.append(f"{name}/{c['name']}: allowPrivilegeEscalation not false")
+                  if csc.get("readOnlyRootFilesystem") is not True:
+                      failures.append(f"{name}/{c['name']}: root filesystem is writable")
+                  if csc.get("capabilities", {}).get("drop") != ["ALL"]:
+                      failures.append(f"{name}/{c['name']}: does not drop ALL capabilities")
+                  res = c.get("resources", {})
+                  if not res.get("requests") or not res.get("limits"):
+                      failures.append(f"{name}/{c['name']}: missing resource requests or limits")
+                  if not c.get("readinessProbe"):
+                      failures.append(f"{name}/{c['name']}: no readiness probe")
+                  # Secrets must arrive by reference, never as a literal value.
+                  for env in c.get("env", []):
+                      key = env.get("name", "")
+                      if any(t in key.upper() for t in ("TOKEN", "SECRET", "PASSWORD", "KEY")):
+                          if "value" in env and env["value"]:
+                              failures.append(f"{name}/{c['name']}: {key} has a literal value")
+
+          # No RBAC wildcards, and no monitoring identity that can read secrets.
+          for d in docs:
+              if d["kind"] in ("Role", "ClusterRole"):
+                  for rule in d.get("rules", []):
+                      if "*" in rule.get("verbs", []):
+                          failures.append(f"{d['metadata']['name']}: wildcard verb in RBAC rule")
+                      if "secrets" in rule.get("resources", []):
+                          failures.append(f"{d['metadata']['name']}: grants access to secrets")
+              if d["kind"] == "Secret":
+                  for key, value in (d.get("stringData") or {}).items():
+                      if value:
+                          failures.append(f"Secret {d['metadata']['name']}: {key} has a committed value")
+
+              if d["kind"] == "Namespace":
+                  labels = d["metadata"].get("labels", {})
+                  if labels.get("pod-security.kubernetes.io/enforce") != "restricted":
+                      failures.append("namespace does not enforce the restricted Pod Security profile")
+
+          if failures:
+              print("::error::Kubernetes security assertions failed")
+              for f in failures:
+                  print(f"  - {f}")
+              sys.exit(1)
+          print(f"All security assertions passed across {len(workloads)} workloads.")
+          PY
+
+  # --------------------------------------------------------------- security
+  security:
+    name: Security scanning
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: read
+      security-events: write   # required to upload SARIF to code scanning
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: container-images
+          path: /tmp
+
+      - name: Load images
+        run: docker load < /tmp/images.tar.gz
+
+      - name: Scan the control plane image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cloudops/control-plane:ci
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+          # Do NOT fail the build on a base-image CVE with no fix available -
+          # an unactionable red build gets ignored, and then the actionable one
+          # gets ignored too. Findings go to the security tab where they can be
+          # triaged; `exit-code: 1` belongs on a fixable-only scan.
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Scan the repository for misconfiguration and secrets
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Fail on any committed secret
+        # This one IS a hard failure. A leaked credential is not a "triage
+        # later" finding, and unlike a base-image CVE it is always actionable.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          format: table
+          exit-code: "1"
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .
+          category: cloudops-sentinel
+
+  # ---------------------------------------------------------------- publish
+  publish:
+    name: Publish images
+    runs-on: ubuntu-latest
+    needs: [e2e, k8s-validate, security]
+    # Only from main, and never from a pull request - a fork PR must never be
+    # able to push an image to the registry.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write        # for keyless signing / provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # The ephemeral, job-scoped token. No PAT, no stored registry
+          # credential, nothing to rotate or leak.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/control-plane
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest
+            type=raw,value=1.0.0
+
+      - name: Push the control plane
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/control-plane
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Immutable digest + build provenance, so a deployed image can be
+          # traced back to the exact commit and workflow run that produced it.
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=control-plane
+
+      - name: Push the demo service
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/demo-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}/demo-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ github.repository }}/demo-service:latest
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=demo-service
+
+      - name: Summarise the release
+        run: |
+          {
+            echo "### CloudOps Sentinel published"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Control plane | \`${REGISTRY}/${GITHUB_REPOSITORY}/control-plane:${GITHUB_SHA}\` |"
+            echo "| Demo service | \`${REGISTRY}/${GITHUB_REPOSITORY}/demo-service:${GITHUB_SHA}\` |"
+            echo ""
+            echo "Verified end to end before publishing: unit tests, container build,"
+            echo "live incident detection, Kubernetes security assertions, image scan."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ----------------------------------------------------------------- deploy
+  # Deliberately left as a gated, manual stage rather than pretending this
+  # repository has a cluster to deploy to. The environment gate is what gives
+  # you a required reviewer and an audit trail on production changes.
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: [publish]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://cloudops.example.internal
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deployment plan
+        run: |
+          echo "In a real environment this step would:"
+          echo "  1. authenticate with OIDC federation (no static cloud key)"
+          echo "     - Azure: azure/login with a federated credential"
+          echo "     - AWS:   aws-actions/configure-aws-credentials with role-to-assume"
+          echo "  2. kubectl apply -k ."
+          echo "  3. kubectl -n cloudops rollout status statefulset/control-plane --timeout=180s"
+          echo "  4. run scripts/verify_local.py against the deployed ingress"
+          echo "  5. kubectl rollout undo on failure"
+          echo ""
+          echo "It is gated on the 'production' environment so a human approves"
+          echo "the change and the approval is recorded."

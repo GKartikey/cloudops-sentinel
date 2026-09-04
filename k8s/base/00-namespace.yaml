@@ -1,0 +1,65 @@
+# Namespace + guardrails
+# ---------------------------------------------------------------------------
+# The namespace is not just a folder. It is the boundary for RBAC, network
+# policy, quota and Pod Security admission - which is why all four are defined
+# here together rather than scattered.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudops
+  labels:
+    name: cloudops
+    app.kubernetes.io/part-of: cloudops-sentinel
+    # Pod Security Admission. "restricted" is the strictest built-in profile:
+    # no privilege escalation, non-root, all capabilities dropped, seccomp on.
+    # `enforce` rejects a non-compliant pod outright; `warn` and `audit` mean a
+    # violation is also visible to the person applying it and in the audit log
+    # rather than only being a silent rejection.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+
+---
+# A namespace without a quota can consume the whole cluster. This bounds the
+# blast radius of a runaway HPA or a bad `replicas:` value in a rushed PR.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cloudops-quota
+  namespace: cloudops
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 6Gi
+    limits.cpu: "8"
+    limits.memory: 10Gi
+    pods: "30"
+    persistentvolumeclaims: "4"
+    services.loadbalancers: "1"
+
+---
+# A LimitRange gives every container a default request/limit, so a pod authored
+# without resources cannot land as BestEffort and become the first thing the
+# kubelet evicts under memory pressure - or starve its neighbours.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cloudops-limits
+  namespace: cloudops
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 10m
+        memory: 32Mi

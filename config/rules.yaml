@@ -1,0 +1,124 @@
+# CloudOps Sentinel - Alert rules and analyser thresholds
+# ---------------------------------------------------------------------------
+# Alert rules are evaluated by the control plane on every collection tick. They
+# intentionally mirror Prometheus alerting semantics (expr / for / labels /
+# annotations) so the same intent can be lifted into
+# observability/prometheus/alert_rules.yml with no conceptual translation.
+#
+#   metric      one of the collected metric names
+#   comparison  gt | lt
+#   threshold   numeric bound
+#   for_seconds the condition must hold this long before the alert fires
+#               (this is what stops a single noisy scrape from paging anyone)
+#   severity    critical | warning | info
+
+alerting:
+  # An alert stays firing until the condition has been clear for this long.
+  resolve_after_seconds: 120
+  rules:
+    - name: HighCpuUtilization
+      metric: cpu_utilization
+      comparison: gt
+      threshold: 85
+      for_seconds: 60
+      severity: warning
+      summary: "CPU above 85% on {resource}"
+      description: "Sustained CPU saturation. Check for a runaway process or scale out."
+      runbook: docs/RUNBOOK.md#high-cpu
+
+    - name: CriticalCpuUtilization
+      metric: cpu_utilization
+      comparison: gt
+      threshold: 95
+      for_seconds: 60
+      severity: critical
+      summary: "CPU above 95% on {resource}"
+      description: "Resource is CPU-saturated and will be shedding load."
+      runbook: docs/RUNBOOK.md#high-cpu
+
+    - name: HighMemoryUtilization
+      metric: memory_utilization
+      comparison: gt
+      threshold: 90
+      for_seconds: 60
+      severity: warning
+      summary: "Memory above 90% on {resource}"
+      description: "Approaching the memory limit; an OOM kill is likely next."
+      runbook: docs/RUNBOOK.md#memory-leak
+
+    - name: HighErrorRate
+      metric: error_rate
+      comparison: gt
+      threshold: 0.05
+      for_seconds: 60
+      severity: critical
+      summary: "Error rate above 5% on {resource}"
+      description: "User-visible failures. Check recent deploys and dependencies."
+      runbook: docs/RUNBOOK.md#error-burst
+
+    - name: ElevatedErrorRate
+      metric: error_rate
+      comparison: gt
+      threshold: 0.02
+      for_seconds: 120
+      severity: warning
+      summary: "Error rate above 2% on {resource}"
+      description: "Errors above the service objective but below the paging line."
+      runbook: docs/RUNBOOK.md#error-burst
+
+    - name: LatencySLOBreach
+      metric: latency_p95_ms
+      comparison: gt
+      threshold: 800
+      for_seconds: 90
+      severity: warning
+      summary: "p95 latency above 800ms on {resource}"
+      description: "Latency objective breached. Look for saturation or a slow dependency."
+      runbook: docs/RUNBOOK.md#latency
+
+    # restart_count is a monotonic COUNTER, so this rule alerts on how much it
+    # grew over a window rather than on its absolute value. Comparing the raw
+    # counter would latch on the first crash loop and never resolve, because a
+    # counter never goes back down. This is the direct equivalent of writing
+    # increase(restart_count[10m]) > 2 in a Prometheus rule.
+    - name: ContainerRestartLoop
+      metric: restart_count
+      aggregation: increase
+      window_seconds: 600
+      comparison: gt
+      threshold: 2
+      for_seconds: 0
+      severity: critical
+      summary: "{resource} restarted {value} times in the last 10 minutes"
+      description: "Repeated restarts indicate a crash loop. Check logs, exit codes and probe thresholds."
+      runbook: docs/RUNBOOK.md#crash-loop
+
+    - name: TargetDown
+      metric: availability
+      comparison: lt
+      threshold: 1
+      for_seconds: 60
+      severity: critical
+      summary: "{resource} is not responding to health probes"
+      description: "The collector could not reach the target health endpoint."
+      runbook: docs/RUNBOOK.md#target-down
+
+# --------------------------------------------------------------------------
+# Thresholds used by the recommendation engine. Kept here rather than hardcoded
+# so a FinOps team can tune aggressiveness without touching Python.
+recommendations:
+  # A resource is over-provisioned if p95 CPU stays under this for the window.
+  overprovisioned_cpu_p95: 40
+  overprovisioned_mem_p95: 50
+  # Under-utilised (idle) is a stronger claim than over-provisioned.
+  underutilised_cpu_p95: 10
+  underutilised_mem_p95: 20
+  # Never recommend shrinking below this many observed samples of evidence.
+  min_samples: 8
+  # Downsize proposal: target this p95 CPU after the change (headroom included).
+  target_cpu_after_resize: 60
+  # Error-rate and restart thresholds for the reliability recommendations.
+  high_error_rate: 0.03
+  unhealthy_restart_count: 3
+  # Storage sitting in a hot tier with no lifecycle policy is a tiering target.
+  storage_tiering_min_gb: 500

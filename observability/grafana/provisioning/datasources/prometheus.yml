@@ -1,0 +1,29 @@
+# Grafana datasource provisioning
+# ---------------------------------------------------------------------------
+# Provisioned as code rather than clicked in the UI. A hand-configured Grafana
+# is a snowflake: it cannot be recreated, reviewed, or rolled back, and the one
+# person who set it up becomes a dependency. This file is the datasource.
+#
+# The uid is pinned so the committed dashboard JSON can reference it. Letting
+# Grafana generate a random uid means the dashboard imports with every panel
+# saying "datasource not found".
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: cloudops-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Should match Prometheus's scrape_interval so Grafana picks sensible
+      # step sizes instead of over-sampling and drawing sawtooth artefacts.
+      timeInterval: 15s
+      httpMethod: POST
+      manageAlerts: false
+    # No credentials here. This Prometheus is reachable only on the internal
+    # compose network. If you expose it, put an authenticating proxy in front
+    # and move the credential into secureJsonData sourced from the environment.

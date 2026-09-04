@@ -1,0 +1,141 @@
+# Network policy - least privilege at the network layer
+# ---------------------------------------------------------------------------
+# By default Kubernetes networking is completely flat: every pod can reach every
+# other pod in the cluster. One compromised container can then scan and talk to
+# the entire estate. These policies invert that to default-deny and then open
+# only the paths that are actually used.
+#
+# REQUIRES A CNI THAT ENFORCES NETWORK POLICY (Calico, Cilium, Azure CNI with
+# policy, AWS VPC CNI with Calico). On a CNI that ignores them these objects
+# apply cleanly and do nothing at all - which is a genuinely dangerous illusion
+# of security, so verify enforcement rather than assuming it.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: cloudops
+spec:
+  # An empty podSelector selects every pod in the namespace.
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  # No rules = nothing permitted. Everything below adds back a specific path.
+
+---
+# DNS is the exception everyone forgets. Deny egress without this and every
+# pod hangs on name resolution with an error that looks nothing like a network
+# policy problem.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: cloudops
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+
+---
+# The control plane scrapes the demo workloads. This is the only east-west path
+# in the namespace, and it is one-directional on one port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: control-plane-egress-to-workloads
+  namespace: cloudops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: control-plane
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: workload
+      ports:
+        - { protocol: TCP, port: 8080 }
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workloads-ingress-from-control-plane
+  namespace: cloudops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: workload
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: control-plane
+      ports:
+        - { protocol: TCP, port: 8080 }
+
+---
+# Prometheus and an ingress controller need to reach the control plane. Scoped
+# to labelled namespaces rather than opened to the world.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: control-plane-ingress
+  namespace: cloudops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: control-plane
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        # Same-namespace access (the demo workloads never call back, but a
+        # debug pod in this namespace is a normal operational need).
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 8000 }
+
+---
+# The alert webhook is the one legitimate outbound path to the internet, and it
+# is restricted to HTTPS and excludes every private range plus the cloud
+# instance-metadata address. 169.254.169.254 is how an SSRF turns into stolen
+# cloud credentials; blocking it at the network layer means the application does
+# not have to be the only thing standing between a bug and an IAM role.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: control-plane-egress-webhook
+  namespace: cloudops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: control-plane
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }

@@ -1,0 +1,65 @@
+# Prometheus scrape configuration
+# ---------------------------------------------------------------------------
+# Two kinds of target, and the distinction is worth being explicit about:
+#
+#   control-plane   scraped as an EXPORTER. It re-publishes the whole simulated
+#                   multi-cloud estate as cloudops_resource_* series. This is
+#                   the standard pattern for anything Prometheus cannot scrape
+#                   directly - a cloud billing API, a SaaS, a legacy appliance:
+#                   you write an exporter that translates, and Prometheus never
+#                   has to know the difference.
+#
+#   demo services   scraped DIRECTLY, the ordinary case: an instrumented app
+#                   exposing its own /metrics.
+#
+# The result is that the same PromQL works across a simulated fleet and real
+# containers, which is exactly the property that makes the demo transferable.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: cloudops-local
+    environment: local
+
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ["alertmanager:9093"]
+#   Left commented deliberately: the control plane already routes alerts to its
+#   own sinks. Point this at a real Alertmanager and both paths coexist - the
+#   Prometheus rules below are the same conditions expressed in PromQL.
+
+scrape_configs:
+  - job_name: cloudops-control-plane
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["control-plane:8000"]
+        labels:
+          component: control-plane
+
+  - job_name: cloudops-demo-services
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "checkout-api:8080"
+          - "inventory-api:8080"
+          - "report-worker:8080"
+        labels:
+          component: workload
+    relabel_configs:
+      # Turn "checkout-api:8080" into a clean `service` label. Without this the
+      # only identity a series has is the host:port, which is unreadable on a
+      # dashboard and breaks the moment the port changes.
+      - source_labels: [__address__]
+        regex: "([^:]+):.*"
+        target_label: service
+        replacement: "${1}"
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -1,0 +1,53 @@
+# kustomize root
+#   kubectl apply -k .
+#   kubectl kustomize .        # render without applying
+#
+# This lives at the repository root rather than beside the manifests for a
+# specific reason: kustomize refuses to read files outside the directory
+# containing the kustomization (a deliberate security restriction, so a
+# kustomization cannot reach arbitrary paths on the build machine). The
+# ConfigMap has to be generated from config/*.yaml, which sits above k8s/base,
+# so the kustomization has to sit at or above both.
+#
+# The alternative is `--load-restrictor LoadRestrictionsNone`, which `kubectl
+# apply -k` does not even expose. Restructuring is better than requiring a flag
+# that disables a safety feature.
+#
+# The payoff is one source of truth: the SAME config/*.yaml files that
+# docker-compose mounts become the ConfigMap. A second hand-maintained copy is
+# guaranteed to drift, and the drift is discovered during an incident.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: cloudops
+
+resources:
+  - k8s/base
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: cloudops-sentinel
+      app.kubernetes.io/managed-by: kustomize
+
+configMapGenerator:
+  - name: cloudops-inventory
+    files:
+      - config/inventory.yaml
+      - config/pricing.yaml
+      - config/rules.yaml
+
+generatorOptions:
+  # Keep the hash suffix. It is what makes a config change roll the pods:
+  # editing config/inventory.yaml produces a new ConfigMap name, which changes
+  # the pod spec, which triggers a rollout. Without it, a mounted ConfigMap
+  # edit is silently ignored by running containers - the classic "I changed the
+  # config and nothing happened".
+  disableNameSuffixHash: false
+
+images:
+  - name: cloudops/control-plane
+    newTag: "1.0.0"
+  - name: cloudops/demo-service
+    newTag: "1.0.0"

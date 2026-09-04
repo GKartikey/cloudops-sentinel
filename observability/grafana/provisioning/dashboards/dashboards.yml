@@ -1,0 +1,20 @@
+# Grafana dashboard provisioning
+# ---------------------------------------------------------------------------
+# Dashboards are loaded from disk, so they live in git and travel with the code
+# that emits the metrics. `allowUiUpdates: false` means an edit made in the
+# browser will not survive a restart - which sounds hostile but is the point:
+# the file is the source of truth, so a change has to go through review.
+
+apiVersion: 1
+
+providers:
+  - name: cloudops
+    orgId: 1
+    folder: CloudOps Sentinel
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

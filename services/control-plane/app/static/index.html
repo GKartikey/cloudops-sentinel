@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CloudOps Sentinel</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#128225;</text></svg>">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>CloudOps Sentinel</h1>
+    <span class="sub" id="build">v-</span>
+  </div>
+  <div class="header-right">
+    <span class="pill" id="fleet-pill"><span class="dot"></span><span id="fleet-status">connecting</span></span>
+    <span class="pill live"><span class="dot"></span><span id="tick">--</span></span>
+    <a href="/docs" target="_blank" rel="noopener">API</a>
+    <a href="/metrics" target="_blank" rel="noopener">Metrics</a>
+  </div>
+</header>
+
+<main>
+
+  <!-- ------------------------------------------------------------- KPIs -->
+  <section class="kpis" id="kpis" aria-label="Fleet key indicators"></section>
+
+  <!-- -------------------------------------------------- incident control -->
+  <section class="panel">
+    <h2>Incident simulation
+      <span class="count" id="incident-count">no active incidents</span>
+    </h2>
+    <div class="body">
+      <div class="controls">
+        <label for="sc-scenario">Scenario</label>
+        <select id="sc-scenario"></select>
+        <label for="sc-target">Target</label>
+        <select id="sc-target"></select>
+        <label for="sc-duration">Seconds</label>
+        <input id="sc-duration" type="number" min="30" max="3600" value="180" style="width:82px">
+        <button class="primary" id="sc-launch">Launch incident</button>
+        <button class="danger" id="sc-stop">Stop all</button>
+        <span id="sc-msg" class="res-meta"></span>
+      </div>
+      <div id="incident-list" style="margin-top:12px"></div>
+      <p class="hint">
+        Targets marked <span class="badge b-live">live</span> are real Docker containers: the control plane calls their
+        chaos endpoint, so the container genuinely burns CPU, leaks memory, injects 5xx or exits and gets restarted.
+        Everything downstream &mdash; scrape, health score, anomaly detector, alert rules &mdash; discovers it from the
+        numbers alone.
+      </p>
+    </div>
+  </section>
+
+  <div class="grid sidebar">
+    <div>
+      <!-- ------------------------------------------------------ resources -->
+      <section class="panel">
+        <h2>Resource inventory <span class="count" id="res-count"></span></h2>
+        <div class="body flush scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Resource</th><th>Provider</th><th>CPU</th><th>Memory</th>
+                <th class="num">p95 ms</th><th class="num">Err</th><th class="num">Restarts</th>
+                <th class="num">$/mo</th><th class="num">Score</th>
+              </tr>
+            </thead>
+            <tbody id="res-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- chart -->
+      <section class="panel">
+        <h2>Metric history <span class="count" id="chart-title">select a resource</span></h2>
+        <div class="body">
+          <div class="chart-head">
+            <label for="chart-metric" class="sr-only">Metric</label>
+            <select id="chart-metric">
+              <option value="cpu_utilization">CPU utilisation (%)</option>
+              <option value="memory_utilization">Memory utilisation (%)</option>
+              <option value="latency_p95_ms">Request latency p95 (ms)</option>
+              <option value="error_rate">Error rate (ratio)</option>
+              <option value="requests_per_second">Requests per second</option>
+              <option value="restart_count">Restart count</option>
+              <option value="disk_utilization">Disk utilisation (%)</option>
+              <option value="availability">Availability</option>
+            </select>
+            <label for="chart-range" class="sr-only">Range</label>
+            <select id="chart-range">
+              <option value="15">15 min</option>
+              <option value="60" selected>1 hour</option>
+              <option value="360">6 hours</option>
+            </select>
+            <span class="now" id="chart-now"></span>
+          </div>
+          <div id="chart-host"><p class="chart-empty">Pick a row in the inventory to plot its history.</p></div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------ recommendations -->
+      <section class="panel">
+        <h2>Recommendations <span class="count" id="rec-count"></span></h2>
+        <div class="body flush scroll" id="rec-body"></div>
+      </section>
+    </div>
+
+    <div>
+      <!-- --------------------------------------------------------- alerts -->
+      <section class="panel">
+        <h2>Active alerts <span class="count" id="alert-count"></span></h2>
+        <div class="body flush scroll" id="alert-body"></div>
+      </section>
+
+      <!-- ------------------------------------------------------ anomalies -->
+      <section class="panel">
+        <h2>Anomalies <span class="count" id="anom-count"></span></h2>
+        <div class="body flush scroll" id="anom-body"></div>
+      </section>
+
+      <!-- ----------------------------------------------------------- cost -->
+      <section class="panel">
+        <h2>Cost breakdown <span class="count" id="cost-total"></span></h2>
+        <div class="body" id="cost-body"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- --------------------------------------------------------------- logs -->
+  <section class="panel">
+    <h2>Log stream
+      <span class="count" id="log-count"></span>
+      <span class="filters" id="log-filters">
+        <button data-level="" class="on">all</button>
+        <button data-level="ERROR">error</button>
+        <button data-level="WARN">warn</button>
+        <button data-level="INFO">info</button>
+      </span>
+    </h2>
+    <div class="body flush scroll logs" id="log-body"></div>
+  </section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

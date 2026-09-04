@@ -1,0 +1,361 @@
+# Demo workloads
+# ---------------------------------------------------------------------------
+# Three Deployments from one image, distinguished by SERVICE_ROLE. Deployments
+# (not StatefulSets) because these are stateless and horizontally scalable -
+# which is exactly why the HPA at the bottom can exist for them and not for the
+# control plane.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-api
+  namespace: cloudops
+  labels: &checkout-labels
+    app.kubernetes.io/name: checkout-api
+    app.kubernetes.io/component: workload
+    app.kubernetes.io/part-of: cloudops-sentinel
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: checkout-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never drop below the current capacity during a deploy, and add at most
+      # one extra pod. With readiness probes wired up this is a genuinely
+      # zero-downtime rollout rather than a hopeful one.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels: *checkout-labels
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cloudops-demo
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread replicas across nodes so losing one node does not take the whole
+      # service with it. ScheduleAnyway rather than DoNotSchedule: on a
+      # single-node kind/minikube cluster a hard constraint would leave the
+      # second replica Pending forever.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: checkout-api
+      containers:
+        - name: demo
+          image: cloudops/demo-service:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SERVICE_NAME
+              value: checkout-api
+            - name: SERVICE_ROLE
+              value: api
+            - name: BASE_RPS
+              value: "8"
+            - name: BASE_LATENCY_MS
+              value: "35"
+            - name: CHAOS_STATE_PATH
+              value: /state/chaos.json
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              # Sleep before the process exits so the endpoint is removed from
+              # every kube-proxy/ingress table BEFORE the container stops
+              # accepting connections. Skipping this is the single most common
+              # cause of 502s during an otherwise correct rolling update.
+              exec:
+                command: ["sleep", "5"]
+          volumeMounts:
+            - name: state
+              mountPath: /state
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: state
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout-api
+  namespace: cloudops
+  labels:
+    app.kubernetes.io/name: checkout-api
+spec:
+  selector:
+    app.kubernetes.io/name: checkout-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-api
+  namespace: cloudops
+  labels: &inventory-labels
+    app.kubernetes.io/name: inventory-api
+    app.kubernetes.io/component: workload
+    app.kubernetes.io/part-of: cloudops-sentinel
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inventory-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels: *inventory-labels
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cloudops-demo
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: demo
+          image: cloudops/demo-service:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SERVICE_NAME
+              value: inventory-api
+            - name: SERVICE_ROLE
+              value: inventory
+            - name: BASE_RPS
+              value: "5"
+            - name: CHAOS_STATE_PATH
+              value: /state/chaos.json
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - { name: state, mountPath: /state }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: state, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-api
+  namespace: cloudops
+spec:
+  selector:
+    app.kubernetes.io/name: inventory-api
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: report-worker
+  namespace: cloudops
+  labels: &worker-labels
+    app.kubernetes.io/name: report-worker
+    app.kubernetes.io/component: workload
+    app.kubernetes.io/part-of: cloudops-sentinel
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: report-worker
+  template:
+    metadata:
+      labels: *worker-labels
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: cloudops-demo
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: demo
+          image: cloudops/demo-service:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: SERVICE_NAME, value: report-worker }
+            - { name: SERVICE_ROLE, value: worker }
+            - { name: BASE_RPS, value: "2" }
+            - { name: BASE_LATENCY_MS, value: "120" }
+            - { name: CHAOS_STATE_PATH, value: /state/chaos.json }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 250m, memory: 256Mi }
+          # NOTE: this worker deliberately ships WITHOUT a liveness probe.
+          # It is the live example behind the "missing health check"
+          # recommendation - the inventory marks health_check: false for it and
+          # the recommendation engine flags it on every run.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - { name: state, mountPath: /state }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: state, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: report-worker
+  namespace: cloudops
+spec:
+  selector:
+    app.kubernetes.io/name: report-worker
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+
+---
+# Horizontal Pod Autoscaler.
+#
+# Scaling on CPU only works because requests are set: the HPA compares actual
+# usage against the REQUEST, so a pod with no request has no denominator and
+# the HPA silently does nothing. behavior/ tuning matters just as much - the
+# default 5-minute stabilisation on scale-down is there to stop the classic
+# flap where a burst scales up, the burst ends, it scales straight back down,
+# and the next burst starts from cold.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: checkout-api
+  namespace: cloudops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: checkout-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: checkout-api
+  namespace: cloudops
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: checkout-api

@@ -1,0 +1,225 @@
+# CloudOps Sentinel - local stack
+# ---------------------------------------------------------------------------
+#   docker compose up --build          bring up everything
+#   docker compose --profile observability up -d    add Prometheus + Grafana
+#
+# Nothing here needs a cloud account, a credit card, or an API key. Secrets are
+# read from the environment (see .env.example); no credential is written in this
+# file, and every default is safe to commit.
+
+name: cloudops-sentinel
+
+# Anchors keep the three demo services honest: identical build, identical
+# hardening, only the role and the resource envelope differ.
+x-demo-defaults: &demo-defaults
+  build:
+    context: ./services/demo-service
+    dockerfile: Dockerfile
+  image: cloudops/demo-service:1.0.0
+  restart: unless-stopped
+  networks: [cloudops]
+  security_opt:
+    # Stops a process inside the container gaining privileges it was not
+    # started with (setuid binaries, file capabilities).
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+
+  # ------------------------------------------------------------ control plane
+  control-plane:
+    build:
+      context: ./services/control-plane
+      dockerfile: Dockerfile
+    image: cloudops/control-plane:1.0.0
+    container_name: cloudops-control-plane
+    restart: unless-stopped
+    ports:
+      - "${CONTROL_PLANE_PORT:-8000}:8000"
+    environment:
+      SERVICE_NAME: cloudops-control-plane
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      APP_VERSION: ${APP_VERSION:-1.0.0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      COLLECT_INTERVAL_SECONDS: ${COLLECT_INTERVAL_SECONDS:-10}
+      RETENTION_HOURS: ${RETENTION_HOURS:-24}
+      BACKFILL_HOURS: ${BACKFILL_HOURS:-6}
+      ANOMALY_Z_THRESHOLD: ${ANOMALY_Z_THRESHOLD:-3.5}
+      # Secrets come from the environment and are empty unless you set them.
+      # There is no fallback value anywhere in the image.
+      CLOUDOPS_API_TOKEN: ${CLOUDOPS_API_TOKEN:-}
+      REQUIRE_TOKEN_FOR_WRITES: ${REQUIRE_TOKEN_FOR_WRITES:-false}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    volumes:
+      # Config is mounted read-only: the control plane has no business editing
+      # its own inventory or rate card at runtime.
+      - ./config:/app/config:ro
+      - cloudops-data:/data
+    networks: [cloudops]
+    depends_on:
+      checkout-api:
+        condition: service_healthy
+      inventory-api:
+        condition: service_healthy
+      report-worker:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ------------------------------------------------------------ demo workloads
+  checkout-api:
+    <<: *demo-defaults
+    container_name: cloudops-checkout-api
+    environment:
+      SERVICE_NAME: checkout-api
+      SERVICE_ROLE: api
+      BASE_RPS: "8"
+      BASE_LATENCY_MS: "35"
+    ports:
+      - "${CHECKOUT_PORT:-8081}:8080"
+    # Limits are what make the container's own CPU/memory percentages mean
+    # something: the service reports usage against THIS envelope, exactly as
+    # Kubernetes would compute it against a pod limit.
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  inventory-api:
+    <<: *demo-defaults
+    container_name: cloudops-inventory-api
+    environment:
+      SERVICE_NAME: inventory-api
+      SERVICE_ROLE: inventory
+      BASE_RPS: "5"
+      BASE_LATENCY_MS: "28"
+    ports:
+      - "${INVENTORY_PORT:-8082}:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  report-worker:
+    <<: *demo-defaults
+    container_name: cloudops-report-worker
+    environment:
+      SERVICE_NAME: report-worker
+      SERVICE_ROLE: worker
+      BASE_RPS: "2"
+      BASE_LATENCY_MS: "120"
+    ports:
+      - "${WORKER_PORT:-8083}:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  # ------------------------------------------------------------ observability
+  # Optional. The platform is fully functional without these two; they exist to
+  # show that the /metrics endpoint is a real Prometheus exposition and not a
+  # bespoke format that only our own dashboard understands.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: cloudops-prometheus
+    profiles: [observability]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=24h
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./observability/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    networks: [cloudops]
+    depends_on:
+      - control-plane
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: cloudops-grafana
+    profiles: [observability]
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      # No default password is baked in. Set GRAFANA_ADMIN_PASSWORD in .env, or
+      # Grafana keeps its own first-run credential and forces a change on login.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks: [cloudops]
+    depends_on:
+      - prometheus
+
+# Compose reads the password from a file on the host rather than from this
+# YAML, so the credential is never in version control and never in `docker
+# inspect` output as an environment variable.
+secrets:
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password.txt
+
+volumes:
+  cloudops-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  cloudops:
+    driver: bridge

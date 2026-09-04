@@ -1,0 +1,413 @@
+{
+  "uid": "cloudops-sentinel",
+  "title": "CloudOps Sentinel - Fleet Overview",
+  "tags": ["cloudops", "finops", "reliability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "editable": true,
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "provider",
+        "label": "Provider",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+        "query": "label_values(cloudops_resource_cpu_utilization_percent, provider)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+        "query": "label_values(cloudops_resource_cpu_utilization_percent, environment)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Fleet posture",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Fleet health score",
+      "description": "Mean composite health score across every monitored resource. 100 is clean.",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "targets": [{ "expr": "cloudops_fleet_health_score", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 60 },
+              { "color": "green", "value": 85 }
+            ]
+          }
+        }
+      },
+      "options": { "graphMode": "area", "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Firing alerts",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "targets": [{ "expr": "sum(cloudops_active_alerts)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        }
+      },
+      "options": { "graphMode": "area", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Estimated monthly spend",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 5, "w": 5, "x": 8, "y": 1 },
+      "targets": [{ "expr": "cloudops_fleet_estimated_cost_monthly_usd", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 0 } },
+      "options": { "graphMode": "area", "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Waste (unused capacity)",
+      "description": "Portion of the monthly bill attributable to provisioned capacity the workload never uses.",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 5, "w": 5, "x": 13, "y": 1 },
+      "targets": [{ "expr": "cloudops_fleet_estimated_waste_monthly_usd", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 500 },
+              { "color": "red", "value": 2000 }
+            ]
+          }
+        }
+      },
+      "options": { "graphMode": "area", "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Identified savings / month",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "targets": [{ "expr": "cloudops_fleet_identified_saving_monthly_usd", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "purple" } } },
+      "options": { "graphMode": "area", "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "row",
+      "title": "Utilisation",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU utilisation by resource",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 7 },
+      "targets": [
+        {
+          "expr": "cloudops_resource_cpu_utilization_percent{provider=~\"$provider\", environment=~\"$environment\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "fillOpacity": 6, "lineWidth": 1, "showPoints": "never" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 85 },
+              { "color": "red", "value": 95 }
+            ]
+          }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory utilisation by resource",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 7 },
+      "targets": [
+        {
+          "expr": "cloudops_resource_memory_utilization_percent{provider=~\"$provider\", environment=~\"$environment\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "fillOpacity": 6, "lineWidth": 1, "showPoints": "never" }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+
+    {
+      "type": "row",
+      "title": "Golden signals",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Request latency p95",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "expr": "cloudops_resource_request_latency_p95_milliseconds{environment=~\"$environment\"} > 0",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "fillOpacity": 0, "lineWidth": 1, "showPoints": "never" } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error rate",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 17 },
+      "targets": [
+        {
+          "expr": "cloudops_resource_error_rate_ratio{environment=~\"$environment\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": { "fillOpacity": 8, "lineWidth": 1, "showPoints": "never" }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput (requests/sec)",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 17 },
+      "targets": [
+        {
+          "expr": "cloudops_resource_requests_per_second{environment=~\"$environment\"} > 0",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 6, "lineWidth": 1, "showPoints": "never" } } }
+    },
+
+    {
+      "type": "row",
+      "title": "Reliability",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Container restarts (10m increase)",
+      "description": "Rate of restarts, not the raw counter - a counter can only ever go up and would never resolve.",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 26 },
+      "targets": [
+        {
+          "expr": "increase(cloudops_resource_restart_count[10m])",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "lineWidth": 1, "drawStyle": "bars" } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Availability (health probe)",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 26 },
+      "targets": [
+        { "expr": "cloudops_resource_up", "legendFormat": "{{name}}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "custom": { "fillOpacity": 15, "lineWidth": 1, "lineInterpolation": "stepAfter", "showPoints": "never" }
+        }
+      }
+    },
+    {
+      "type": "piechart",
+      "title": "Resources by health status",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 26 },
+      "targets": [
+        { "expr": "cloudops_fleet_resources", "legendFormat": "{{status}}", "refId": "A" }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "right" }, "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "row",
+      "title": "Cost",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 }
+    },
+    {
+      "type": "barchart",
+      "title": "Monthly cost by provider",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 35 },
+      "targets": [
+        {
+          "expr": "sum by (provider) (cloudops_resource_estimated_cost_monthly_usd)",
+          "legendFormat": "{{provider}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 0 } }
+    },
+    {
+      "type": "bargauge",
+      "title": "Top 10 resources by monthly cost",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 35 },
+      "targets": [
+        {
+          "expr": "topk(10, cloudops_resource_estimated_cost_monthly_usd)",
+          "legendFormat": "{{name}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 0 } },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "bargauge",
+      "title": "Top 10 resources by waste",
+      "description": "Cost of capacity that is provisioned and paid for but not used.",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 35 },
+      "targets": [
+        {
+          "expr": "topk(10, cloudops_resource_estimated_waste_monthly_usd)",
+          "legendFormat": "{{name}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 0,
+          "color": { "mode": "continuous-YlRd" }
+        }
+      },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "row",
+      "title": "Platform self-monitoring",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 43 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Collection tick duration (p95)",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 44 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cloudops_collection_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Seconds since last successful collection",
+      "description": "The monitoring system watching itself. If this climbs, every other panel is stale.",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 44 },
+      "targets": [
+        {
+          "expr": "time() - cloudops_last_collection_timestamp_seconds",
+          "legendFormat": "staleness",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 60 },
+              { "color": "red", "value": 120 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Anomalies detected",
+      "datasource": { "type": "prometheus", "uid": "cloudops-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 44 },
+      "targets": [
+        {
+          "expr": "sum by (severity) (increase(cloudops_anomalies_detected_total[10m]))",
+          "legendFormat": "{{severity}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 40 } } }
+    }
+  ]
+}

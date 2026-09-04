@@ -1,0 +1,114 @@
+# RBAC - least privilege, demonstrated rather than asserted
+# ---------------------------------------------------------------------------
+# Three principles are applied here and each one is worth being able to defend:
+#
+# 1. NO DEFAULT SERVICE ACCOUNT. Every workload gets its own identity. Sharing
+#    `default` means every pod in the namespace inherits every permission any
+#    one of them needs, and you can never take a permission away again.
+#
+# 2. NO TOKEN WHERE NONE IS NEEDED. The demo workloads never call the Kubernetes
+#    API, so automountServiceAccountToken is false on their ServiceAccount. A
+#    token that is not mounted cannot be stolen out of the filesystem by an SSRF
+#    or a path-traversal bug.
+#
+# 3. ROLE, NOT CLUSTERROLE; GET/LIST/WATCH, NOT *. The control plane reads pod
+#    and node state in its OWN namespace to enrich the inventory. It is never
+#    granted create, update, delete, or exec - and it is never granted secrets.
+#    A read-only monitoring identity that can also `create pods` is a privilege
+#    escalation path straight to cluster-admin.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudops-control-plane
+  namespace: cloudops
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/part-of: cloudops-sentinel
+# The control plane DOES talk to the API server, so it needs its token.
+automountServiceAccountToken: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudops-demo
+  namespace: cloudops
+  labels:
+    app.kubernetes.io/name: demo-service
+    app.kubernetes.io/part-of: cloudops-sentinel
+# These pods have no reason to reach the API server. Do not give them the means.
+automountServiceAccountToken: false
+
+---
+# Namespaced read-only access. Note the absence of "secrets": a monitoring
+# component that can read secrets can read every credential in the namespace,
+# and no dashboard is worth that.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cloudops-observer
+  namespace: cloudops
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  # Events explain WHY a pod is unhealthy (OOMKilled, FailedScheduling,
+  # BackOff) in a way the pod spec alone never can.
+  - apiGroups: ["events.k8s.io", ""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cloudops-observer
+  namespace: cloudops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cloudops-observer
+subjects:
+  - kind: ServiceAccount
+    name: cloudops-control-plane
+    namespace: cloudops
+
+---
+# Cluster-scoped objects (nodes) genuinely cannot be granted with a Role, so
+# this is the one ClusterRole - and it is confined to reading node objects and
+# node metrics. Nothing else. Apply it only if you want node-level inventory.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cloudops-node-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cloudops-node-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cloudops-node-reader
+subjects:
+  - kind: ServiceAccount
+    name: cloudops-control-plane
+    namespace: cloudops
