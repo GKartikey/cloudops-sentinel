@@ -16,8 +16,9 @@ import json
 import sqlite3
 import threading
 import time
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -193,9 +194,7 @@ class Store:
             out.setdefault(r["resource_id"], {})[r["metric"]] = (r["value"], r["ts"])
         return out
 
-    def series(
-        self, resource_id: str, metric: str, since: float, limit: int = 5000
-    ) -> list[dict]:
+    def series(self, resource_id: str, metric: str, since: float, limit: int = 5000) -> list[dict]:
         return self.query(
             "SELECT ts, value FROM samples "
             "WHERE resource_id = ? AND metric = ? AND ts >= ? "
@@ -316,9 +315,16 @@ class Store:
             "(ts, resource_id, metric, value, baseline, deviation, score, method, severity, direction) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                record["ts"], record["resource_id"], record["metric"], record["value"],
-                record["baseline"], record["deviation"], record["score"],
-                record["method"], record["severity"], record["direction"],
+                record["ts"],
+                record["resource_id"],
+                record["metric"],
+                record["value"],
+                record["baseline"],
+                record["deviation"],
+                record["score"],
+                record["method"],
+                record["severity"],
+                record["direction"],
             ),
         )
 
@@ -328,9 +334,7 @@ class Store:
             (since, limit),
         )
 
-    def anomaly_exists_recently(
-        self, resource_id: str, metric: str, since: float
-    ) -> bool:
+    def anomaly_exists_recently(self, resource_id: str, metric: str, since: float) -> bool:
         row = self.query_one(
             "SELECT 1 AS hit FROM anomalies "
             "WHERE resource_id = ? AND metric = ? AND ts >= ? LIMIT 1",
@@ -371,9 +375,7 @@ class Store:
                 "last_seen DESC LIMIT ?",
                 (status, limit),
             )
-        return self.query(
-            "SELECT * FROM alerts ORDER BY last_seen DESC LIMIT ?", (limit,)
-        )
+        return self.query("SELECT * FROM alerts ORDER BY last_seen DESC LIMIT ?", (limit,))
 
     def resolve_stale_alerts(self, cutoff: float, now: float) -> list[dict]:
         stale = self.query(
@@ -392,8 +394,13 @@ class Store:
             "INSERT INTO alert_history (ts, fingerprint, rule, resource_id, severity, event, value) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
-                ts, alert["fingerprint"], alert["rule"], alert["resource_id"],
-                alert["severity"], event, alert.get("value", 0.0),
+                ts,
+                alert["fingerprint"],
+                alert["rule"],
+                alert["resource_id"],
+                alert["severity"],
+                event,
+                alert.get("value", 0.0),
             ),
         )
 
@@ -416,8 +423,12 @@ class Store:
             "INSERT INTO incidents (id, scenario, resource_id, started_at, ends_at, "
             "status, magnitude, params, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                incident["id"], incident["scenario"], incident["resource_id"],
-                incident["started_at"], incident["ends_at"], incident["status"],
+                incident["id"],
+                incident["scenario"],
+                incident["resource_id"],
+                incident["started_at"],
+                incident["ends_at"],
+                incident["status"],
                 incident.get("magnitude", 1.0),
                 json.dumps(incident.get("params", {})),
                 incident.get("note", ""),
@@ -433,15 +444,12 @@ class Store:
         return [self._decode_incident(r) for r in rows]
 
     def list_incidents(self, limit: int = 50) -> list[dict]:
-        rows = self.query(
-            "SELECT * FROM incidents ORDER BY started_at DESC LIMIT ?", (limit,)
-        )
+        rows = self.query("SELECT * FROM incidents ORDER BY started_at DESC LIMIT ?", (limit,))
         return [self._decode_incident(r) for r in rows]
 
     def expire_incidents(self, now: float) -> int:
         cur = self.execute(
-            "UPDATE incidents SET status = 'completed' "
-            "WHERE status = 'active' AND ends_at <= ?",
+            "UPDATE incidents SET status = 'completed' " "WHERE status = 'active' AND ends_at <= ?",
             (now,),
         )
         return cur.rowcount or 0

@@ -165,8 +165,10 @@ audit.
 
 ## 13. Testing gaps
 
-69 unit tests plus a 55-check end-to-end script that runs against real
-containers. Not covered: load or soak testing (behaviour at 10,000 resources is
+69 unit tests plus a 50-plus check end-to-end script that runs against real
+containers. (The exact count varies by run: the two reliability recommendation
+categories only appear when something is actually unhealthy, and the script
+correctly skips rather than fails them on a clean fleet.) Not covered: load or soak testing (behaviour at 10,000 resources is
 unknown), chaos testing of the control plane *itself* (what happens if SQLite is
 corrupted mid-write), browser tests for the dashboard, and mutation testing.
 

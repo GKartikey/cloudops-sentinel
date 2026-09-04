@@ -49,7 +49,12 @@ class CostModel:
         hours = self.hours_per_month
         components: dict[str, float] = {}
 
-        if rtype in ("virtual_machine", "kubernetes_node", "container_workload", "managed_database"):
+        if rtype in (
+            "virtual_machine",
+            "kubernetes_node",
+            "container_workload",
+            "managed_database",
+        ):
             vcpu = float(spec.get("vcpu", 0) or 0)
             ram = float(spec.get("memory_gb", 0) or 0)
             disk = float(spec.get("disk_gb", 0) or 0)
@@ -76,9 +81,9 @@ class CostModel:
             free_gbs = self._rate(rtype, "free_gb_seconds_per_month")
             billable_inv = max(invocations - free_inv, 0.0)
             gb_seconds = max(invocations * mem_gb * duration_s - free_gbs, 0.0)
-            components["invocations"] = (
-                billable_inv / 1_000_000.0
-            ) * self._rate(rtype, "per_million_invocations")
+            components["invocations"] = (billable_inv / 1_000_000.0) * self._rate(
+                rtype, "per_million_invocations"
+            )
             components["duration"] = gb_seconds * self._rate(rtype, "per_gb_second")
 
         elif rtype == "load_balancer":
@@ -115,9 +120,7 @@ class CostModel:
         }
 
     # ------------------------------------------------------------ efficiency
-    def efficiency(
-        self, resource: Resource, utilization: dict[str, float]
-    ) -> dict[str, Any]:
+    def efficiency(self, resource: Resource, utilization: dict[str, float]) -> dict[str, Any]:
         """Split a resource's bill into 'earning its keep' and 'waste'.
 
         Efficiency is driven by the *dominant* dimension: a box at 80% memory and
@@ -182,11 +185,10 @@ class CostModel:
             "by_environment": group("environment"),
             "by_owner": group("owner"),
             "by_region": group("region"),
-            "top_spenders": sorted(
-                rows, key=lambda r: r["monthly_cost"], reverse=True
-            )[:10],
+            "top_spenders": sorted(rows, key=lambda r: r["monthly_cost"], reverse=True)[:10],
             "top_waste": [
-                r for r in sorted(rows, key=lambda r: r["waste_monthly"], reverse=True)
+                r
+                for r in sorted(rows, key=lambda r: r["waste_monthly"], reverse=True)
                 if r["waste_monthly"] > 0.5
             ][:10],
             "resources": rows,

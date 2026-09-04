@@ -46,7 +46,9 @@ class Settings:
     """Immutable view of the process configuration."""
 
     # --- identity -------------------------------------------------------
-    service_name: str = field(default_factory=lambda: _env_str("SERVICE_NAME", "cloudops-control-plane"))
+    service_name: str = field(
+        default_factory=lambda: _env_str("SERVICE_NAME", "cloudops-control-plane")
+    )
     environment: str = field(default_factory=lambda: _env_str("ENVIRONMENT", "local"))
     version: str = field(default_factory=lambda: _env_str("APP_VERSION", "1.0.0"))
 
@@ -60,9 +62,7 @@ class Settings:
     config_dir: Path = field(
         default_factory=lambda: Path(_env_str("CONFIG_DIR", "/app/config")).resolve()
     )
-    data_dir: Path = field(
-        default_factory=lambda: Path(_env_str("DATA_DIR", "/data")).resolve()
-    )
+    data_dir: Path = field(default_factory=lambda: Path(_env_str("DATA_DIR", "/data")).resolve())
 
     # --- collection -----------------------------------------------------
     collect_interval_seconds: int = field(

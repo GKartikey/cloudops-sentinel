@@ -115,9 +115,7 @@ class IncidentManager:
         )
         return incident
 
-    async def _inject(
-        self, endpoint: str, scenario: str, duration: int, magnitude: float
-    ) -> bool:
+    async def _inject(self, endpoint: str, scenario: str, duration: int, magnitude: float) -> bool:
         translation = CHAOS_TRANSLATION.get(scenario)
         if not translation:
             return False
@@ -141,9 +139,7 @@ class IncidentManager:
             return False
 
     async def stop(self, incident_id: str) -> bool:
-        incident = self.store.query_one(
-            "SELECT * FROM incidents WHERE id = ?", (incident_id,)
-        )
+        incident = self.store.query_one("SELECT * FROM incidents WHERE id = ?", (incident_id,))
         cancelled = self.store.cancel_incident(incident_id)
         if cancelled and incident:
             resource = self.inventory.get(incident["resource_id"])
@@ -151,8 +147,9 @@ class IncidentManager:
                 await self._clear(resource.endpoint)
             log.info(
                 "incident cancelled",
-                extra={"context": {"incident_id": incident_id,
-                                   "resource_id": incident["resource_id"]}},
+                extra={
+                    "context": {"incident_id": incident_id, "resource_id": incident["resource_id"]}
+                },
             )
         return cancelled
 

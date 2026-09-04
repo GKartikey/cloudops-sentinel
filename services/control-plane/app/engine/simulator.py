@@ -248,9 +248,7 @@ class TelemetrySimulator:
             value = self.apply_incident(value, metric, ts, incident)
         return self._clamp_metric(metric, value)
 
-    def apply_incident(
-        self, value: float, metric: str, ts: float, incident: dict
-    ) -> float:
+    def apply_incident(self, value: float, metric: str, ts: float, incident: dict) -> float:
         scenario = SCENARIOS.get(incident.get("scenario", ""))
         if not scenario:
             return value

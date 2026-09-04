@@ -26,8 +26,9 @@ import json
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from ..core.logging_setup import get_logger
 
@@ -38,7 +39,7 @@ log = get_logger("cloudops.alerts")
 class AlertRule:
     name: str
     metric: str
-    comparison: str          # gt | lt
+    comparison: str  # gt | lt
     threshold: float
     for_seconds: float
     severity: str
@@ -239,9 +240,7 @@ class AlertEngine:
                 matched_fingerprints.add(fingerprint)
                 existing = self.store.get_alert(fingerprint)
                 first_seen = (
-                    existing["first_seen"]
-                    if existing and existing["status"] != "resolved"
-                    else now
+                    existing["first_seen"] if existing and existing["status"] != "resolved" else now
                 )
                 held_for = now - first_seen
                 status = "firing" if held_for >= rule.for_seconds else "pending"

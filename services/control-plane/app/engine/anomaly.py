@@ -44,17 +44,21 @@ MIN_ABSOLUTE_DELTA: dict[str, float] = {
 
 # Metrics where only an increase is interesting. Latency dropping is good news.
 UPWARD_ONLY = frozenset(
-    {"latency_p95_ms", "error_rate", "restart_count", "cpu_utilization",
-     "memory_utilization", "disk_utilization"}
+    {
+        "latency_p95_ms",
+        "error_rate",
+        "restart_count",
+        "cpu_utilization",
+        "memory_utilization",
+        "disk_utilization",
+    }
 )
 
 # 1.4826 makes MAD a consistent estimator of sigma for normally distributed data.
 _MAD_SCALE = 1.4826
 
 
-def robust_z(
-    values: list[float], current: float, floor: float = 0.0
-) -> tuple[float, float, float]:
+def robust_z(values: list[float], current: float, floor: float = 0.0) -> tuple[float, float, float]:
     """Return (z_score, median, scale) for `current` against `values`.
 
     When MAD collapses to zero - a perfectly flat series, which is common for a
@@ -195,7 +199,7 @@ class AnomalyDetector:
         found: list[dict[str, Any]] = []
         for resource_id, metrics in latest.items():
             series = window.get(resource_id, {})
-            for metric, (value, sample_ts) in metrics.items():
+            for metric, (value, _sample_ts) in metrics.items():
                 history = series.get(metric, [])
                 # window includes the current sample; exclude it from its own baseline
                 if history and abs(history[-1] - value) < 1e-9:

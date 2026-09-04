@@ -27,10 +27,29 @@ _correlation_id: ContextVar[str] = ContextVar("correlation_id", default="")
 # Attributes LogRecord always carries; anything else was added by the caller and
 # is worth promoting into the JSON payload.
 _RESERVED = {
-    "args", "asctime", "created", "exc_info", "exc_text", "filename", "funcName",
-    "levelname", "levelno", "lineno", "module", "msecs", "message", "msg", "name",
-    "pathname", "process", "processName", "relativeCreated", "stack_info",
-    "thread", "threadName", "taskName",
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "module",
+    "msecs",
+    "message",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+    "taskName",
 }
 
 
@@ -57,9 +76,7 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": time.strftime(
-                "%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)
-            )
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created))
             + f".{int(record.msecs):03d}Z",
             "level": record.levelname,
             "logger": record.name,
@@ -110,11 +127,9 @@ def configure_logging(
     version: str = "0.0.0",
 ) -> None:
     """Install a single stdout handler on the root logger."""
-    formatter: logging.Formatter
-    if fmt == "text":
-        formatter = TextFormatter()
-    else:
-        formatter = JsonFormatter(service, environment, version)
+    formatter: logging.Formatter = (
+        TextFormatter() if fmt == "text" else JsonFormatter(service, environment, version)
+    )
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)

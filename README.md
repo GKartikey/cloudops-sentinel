@@ -13,7 +13,7 @@ measurements like it would in production.
 ```bash
 git clone <this-repo> && cd cloudops-sentinel
 make up          # build and start everything
-make verify      # prove it actually works (55 checks, ~2 min)
+make verify      # prove it actually works (50+ checks, ~3 min)
 make demo        # guided incident walkthrough
 ```
 
@@ -43,8 +43,8 @@ So when you run `make demo`, this is real:
     chaos in pod  True
 ==> Step 4 - watching the pipeline react
     t+30s  cpu= 62.4%  ...  health=100 (healthy)  alerts=0
-    t+60s  cpu= 91.8%  ...  health= 88 (degraded) alerts=0
-    t+90s  cpu= 94.3%  ...  health= 88 (degraded) alerts=2
+    t+60s  cpu= 91.8%  ...  health= 83 (degraded) alerts=0
+    t+90s  cpu= 91.5%  ...  health= 83 (degraded) alerts=2
 ==> Step 5 - what the platform worked out by itself
     [critical] CPU above 95% on checkout-api  -> docs/RUNBOOK.md#high-cpu
     [warning ] CPU above 85% on checkout-api  -> docs/RUNBOOK.md#high-cpu
@@ -97,7 +97,7 @@ for the scripts. That is all.
 
 ```bash
 make up                 # build + start, waits for readiness
-make verify             # 55-check end-to-end verification, incl. a live incident
+make verify             # 50+ check end-to-end verification, incl. a live incident
 make verify-quick       # same, minus the 2-minute incident test
 make test               # 69 unit tests
 make demo               # narrated incident walkthrough

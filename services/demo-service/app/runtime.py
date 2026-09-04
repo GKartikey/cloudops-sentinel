@@ -145,8 +145,10 @@ class ResourceProbe:
         return round(self._cpu_percent, 2)
 
     def memory_bytes(self) -> float:
-        for path in ("/sys/fs/cgroup/memory.current",
-                     "/sys/fs/cgroup/memory/memory.usage_in_bytes"):
+        for path in (
+            "/sys/fs/cgroup/memory.current",
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+        ):
             raw = _read(path)
             if raw:
                 try:
@@ -252,20 +254,25 @@ class ChaosController:
             self.until = float(state.get("until", 0))
             self.intensity = float(state.get("intensity", 0))
             self.logs.add(
-                "WARN", f"resuming chaos mode {self.mode} after restart", self.service,
-                mode=self.mode, restart_count=self.restart_count,
+                "WARN",
+                f"resuming chaos mode {self.mode} after restart",
+                self.service,
+                mode=self.mode,
+                restart_count=self.restart_count,
                 remaining_seconds=round(self.until - time.time()),
             )
 
     def _save(self) -> None:
         try:
             self.state_path.write_text(
-                json.dumps({
-                    "mode": self.mode,
-                    "until": self.until,
-                    "intensity": self.intensity,
-                    "restart_count": self.restart_count,
-                }),
+                json.dumps(
+                    {
+                        "mode": self.mode,
+                        "until": self.until,
+                        "intensity": self.intensity,
+                        "restart_count": self.restart_count,
+                    }
+                ),
                 encoding="utf-8",
             )
         except OSError as exc:
@@ -293,8 +300,12 @@ class ChaosController:
         self.until = time.time() + max(5, int(duration_seconds))
         self._save()
         self.logs.add(
-            "WARN", f"chaos engaged: {mode}", self.service,
-            mode=mode, intensity=self.intensity, duration_seconds=duration_seconds,
+            "WARN",
+            f"chaos engaged: {mode}",
+            self.service,
+            mode=mode,
+            intensity=self.intensity,
+            duration_seconds=duration_seconds,
         )
         if mode == "cpu_burn":
             self._start_burn()
@@ -302,12 +313,24 @@ class ChaosController:
 
     def clear_effects(self) -> None:
         self._burn_stop.set()
-        if self._burn_thread and self._burn_thread.is_alive():
-            self._burn_thread.join(timeout=2)
-        self._burn_thread = None
+        thread = self._burn_thread
+        # Never join from inside the burn thread itself. `active()` is the burn
+        # loop's own condition and used to call this on expiry, which made the
+        # thread try to join itself - RuntimeError, an ugly traceback in the
+        # container logs, and the cleanup below silently skipped.
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2)
+            self._burn_thread = None
+        elif thread is not threading.current_thread():
+            self._burn_thread = None
         self._ballast.clear()
 
+    def _expired(self) -> bool:
+        """Pure predicate - safe to call from any thread, mutates nothing."""
+        return self.mode == "none" or time.time() >= self.until
+
     def active(self) -> bool:
+        """Predicate with expiry side effects. Do not call from the burn thread."""
         if self.mode == "none":
             return False
         if time.time() >= self.until:
@@ -339,12 +362,14 @@ class ChaosController:
         self._burn_stop = threading.Event()
 
         def burn() -> None:
-            while not self._burn_stop.is_set() and self.active():
+            # _expired(), not active(): active() mutates state and cleans up
+            # threads, which must never happen from inside this thread.
+            while not self._burn_stop.is_set() and not self._expired():
                 slice_start = time.monotonic()
                 busy_for = 0.05 * max(self.intensity, 0.05)
                 x = 0.0
                 while time.monotonic() - slice_start < busy_for:
-                    x += 1.000001 ** 2
+                    x += 1.000001**2
                 idle = max(0.0, 0.05 - busy_for)
                 if idle:
                     time.sleep(idle)
@@ -383,8 +408,11 @@ class ChaosController:
         # is not counted as a restart that never happened.
         self._save()
         self.logs.add(
-            "ERROR", "process exiting: simulated crash", self.service,
-            restart_count=self.restart_count, exit_code=1,
+            "ERROR",
+            "process exiting: simulated crash",
+            self.service,
+            restart_count=self.restart_count,
+            exit_code=1,
         )
         # os._exit bypasses cleanup handlers on purpose: a real crash does not
         # get to run its shutdown hooks either, and the restart policy is what

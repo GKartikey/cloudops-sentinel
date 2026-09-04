@@ -19,37 +19,67 @@ import yaml
 # Prometheus exposition) reads them. Keeping the list here stops the two halves
 # from drifting apart.
 METRICS = (
-    "cpu_utilization",       # percent 0-100
-    "memory_utilization",    # percent 0-100
-    "disk_utilization",      # percent 0-100
-    "restart_count",         # monotonic-ish counter of process restarts
-    "latency_p95_ms",        # request latency, 95th percentile
-    "error_rate",            # ratio 0-1
-    "requests_per_second",   # throughput
-    "availability",          # 1 = probe succeeded, 0 = probe failed
+    "cpu_utilization",  # percent 0-100
+    "memory_utilization",  # percent 0-100
+    "disk_utilization",  # percent 0-100
+    "restart_count",  # monotonic-ish counter of process restarts
+    "latency_p95_ms",  # request latency, 95th percentile
+    "error_rate",  # ratio 0-1
+    "requests_per_second",  # throughput
+    "availability",  # 1 = probe succeeded, 0 = probe failed
 )
 
 # Which metrics are meaningful for which resource type. A storage account has no
 # CPU; reporting a fabricated 0% would pollute every fleet average.
 TYPE_METRICS: dict[str, tuple[str, ...]] = {
-    "virtual_machine": ("cpu_utilization", "memory_utilization", "disk_utilization",
-                        "restart_count", "latency_p95_ms", "error_rate",
-                        "requests_per_second", "availability"),
-    "kubernetes_node": ("cpu_utilization", "memory_utilization", "disk_utilization",
-                        "restart_count", "latency_p95_ms", "error_rate",
-                        "requests_per_second", "availability"),
-    "container_workload": ("cpu_utilization", "memory_utilization", "restart_count",
-                           "latency_p95_ms", "error_rate", "requests_per_second",
-                           "availability"),
-    "managed_database": ("cpu_utilization", "memory_utilization", "disk_utilization",
-                         "latency_p95_ms", "error_rate", "requests_per_second",
-                         "availability"),
-    "serverless_function": ("cpu_utilization", "memory_utilization", "latency_p95_ms",
-                            "error_rate", "requests_per_second", "availability"),
-    "object_storage": ("latency_p95_ms", "error_rate", "requests_per_second",
-                       "availability"),
-    "load_balancer": ("latency_p95_ms", "error_rate", "requests_per_second",
-                      "availability"),
+    "virtual_machine": (
+        "cpu_utilization",
+        "memory_utilization",
+        "disk_utilization",
+        "restart_count",
+        "latency_p95_ms",
+        "error_rate",
+        "requests_per_second",
+        "availability",
+    ),
+    "kubernetes_node": (
+        "cpu_utilization",
+        "memory_utilization",
+        "disk_utilization",
+        "restart_count",
+        "latency_p95_ms",
+        "error_rate",
+        "requests_per_second",
+        "availability",
+    ),
+    "container_workload": (
+        "cpu_utilization",
+        "memory_utilization",
+        "restart_count",
+        "latency_p95_ms",
+        "error_rate",
+        "requests_per_second",
+        "availability",
+    ),
+    "managed_database": (
+        "cpu_utilization",
+        "memory_utilization",
+        "disk_utilization",
+        "latency_p95_ms",
+        "error_rate",
+        "requests_per_second",
+        "availability",
+    ),
+    "serverless_function": (
+        "cpu_utilization",
+        "memory_utilization",
+        "latency_p95_ms",
+        "error_rate",
+        "requests_per_second",
+        "availability",
+    ),
+    "object_storage": ("latency_p95_ms", "error_rate", "requests_per_second", "availability"),
+    "load_balancer": ("latency_p95_ms", "error_rate", "requests_per_second", "availability"),
     "managed_disk": ("disk_utilization",),
     "public_ip": (),
 }
@@ -97,12 +127,21 @@ class Resource:
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "name": self.name, "provider": self.provider,
-            "subscription": self.subscription, "resource_group": self.resource_group,
-            "type": self.type, "sku": self.sku, "region": self.region,
-            "environment": self.environment, "owner": self.owner,
-            "source": self.source, "endpoint": self.endpoint, "tags": self.tags,
-            "spec": self.spec, "config": self.config,
+            "id": self.id,
+            "name": self.name,
+            "provider": self.provider,
+            "subscription": self.subscription,
+            "resource_group": self.resource_group,
+            "type": self.type,
+            "sku": self.sku,
+            "region": self.region,
+            "environment": self.environment,
+            "owner": self.owner,
+            "source": self.source,
+            "endpoint": self.endpoint,
+            "tags": self.tags,
+            "spec": self.spec,
+            "config": self.config,
         }
 
 

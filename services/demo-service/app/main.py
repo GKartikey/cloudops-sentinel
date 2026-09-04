@@ -103,7 +103,7 @@ async def traffic_generator(stop: asyncio.Event) -> None:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=min(delay, 2.0))
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             try:
                 await client.get(random.choice(paths))
@@ -116,8 +116,12 @@ async def traffic_generator(stop: asyncio.Event) -> None:
 async def lifespan(app: FastAPI):
     chaos.record_start()
     logs.add(
-        "INFO", "service starting", SERVICE_NAME,
-        role=SERVICE_ROLE, port=PORT, restart_count=chaos.restart_count,
+        "INFO",
+        "service starting",
+        SERVICE_NAME,
+        role=SERVICE_ROLE,
+        port=PORT,
+        restart_count=chaos.restart_count,
         **probe.info(),
     )
     stop = asyncio.Event()
@@ -167,8 +171,12 @@ async def instrumentation(request: Request, call_next):
         duration = time.perf_counter() - started
         counters.observe(duration, failed=True)
         logs.add(
-            "ERROR", f"request failed: {request.url.path}", SERVICE_NAME,
-            path=request.url.path, status=500, duration_ms=round(duration * 1000, 2),
+            "ERROR",
+            f"request failed: {request.url.path}",
+            SERVICE_NAME,
+            path=request.url.path,
+            status=500,
+            duration_ms=round(duration * 1000, 2),
         )
         return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
@@ -176,11 +184,21 @@ async def instrumentation(request: Request, call_next):
     duration = time.perf_counter() - started
     counters.observe(duration, failed=response.status_code >= 500)
     if response.status_code >= 500:
-        logs.add("ERROR", f"request failed: {request.url.path}", SERVICE_NAME,
-                 path=request.url.path, status=response.status_code)
+        logs.add(
+            "ERROR",
+            f"request failed: {request.url.path}",
+            SERVICE_NAME,
+            path=request.url.path,
+            status=response.status_code,
+        )
     elif duration > 1.0:
-        logs.add("WARN", f"slow request: {request.url.path}", SERVICE_NAME,
-                 path=request.url.path, duration_ms=round(duration * 1000, 2))
+        logs.add(
+            "WARN",
+            f"slow request: {request.url.path}",
+            SERVICE_NAME,
+            path=request.url.path,
+            duration_ms=round(duration * 1000, 2),
+        )
     return response
 
 
@@ -202,15 +220,15 @@ async def checkout() -> dict[str, Any]:
 @app.get("/api/orders")
 async def orders() -> dict[str, Any]:
     await _work(2)
-    return {"orders": [{"id": f"ord-{n}", "total": round(random.uniform(5, 400), 2)}
-                       for n in range(5)]}
+    return {
+        "orders": [{"id": f"ord-{n}", "total": round(random.uniform(5, 400), 2)} for n in range(5)]
+    }
 
 
 @app.get("/api/items")
 async def items() -> dict[str, Any]:
     await _work()
-    return {"items": [{"sku": f"SKU-{n:04d}", "qty": random.randint(0, 200)}
-                      for n in range(8)]}
+    return {"items": [{"sku": f"SKU-{n:04d}", "qty": random.randint(0, 200)} for n in range(8)]}
 
 
 @app.get("/api/stock")
@@ -255,36 +273,38 @@ async def metrics() -> Response:
         return PlainTextResponse("service unavailable", status_code=503)
 
     status = chaos.status()
-    body = "\n".join([
-        "# HELP demo_cpu_utilization_percent CPU used as a percentage of the container CPU limit",
-        "# TYPE demo_cpu_utilization_percent gauge",
-        f"demo_cpu_utilization_percent {probe.cpu_percent()}",
-        "# HELP demo_memory_utilization_percent Memory used as a percentage of the container memory limit",
-        "# TYPE demo_memory_utilization_percent gauge",
-        f"demo_memory_utilization_percent {probe.memory_percent()}",
-        "# HELP demo_memory_used_bytes Resident memory of the container",
-        "# TYPE demo_memory_used_bytes gauge",
-        f"demo_memory_used_bytes {probe.memory_bytes()}",
-        "# HELP demo_requests_total Requests served since process start",
-        "# TYPE demo_requests_total counter",
-        f"demo_requests_total {counters.requests_total}",
-        "# HELP demo_requests_failed_total Requests that returned 5xx since process start",
-        "# TYPE demo_requests_failed_total counter",
-        f"demo_requests_failed_total {counters.requests_failed}",
-        "# HELP demo_request_latency_p95_seconds 95th percentile latency over the recent window",
-        "# TYPE demo_request_latency_p95_seconds gauge",
-        f"demo_request_latency_p95_seconds {round(counters.p95(), 5)}",
-        "# HELP demo_process_start_time_seconds Unix start time of this process",
-        "# TYPE demo_process_start_time_seconds gauge",
-        f"demo_process_start_time_seconds {PROCESS_START_TIME}",
-        "# HELP demo_reported_restart_count Restarts this container has observed",
-        "# TYPE demo_reported_restart_count counter",
-        f"demo_reported_restart_count {status['restart_count']}",
-        "# HELP demo_chaos_active 1 when a chaos mode is engaged",
-        "# TYPE demo_chaos_active gauge",
-        f"demo_chaos_active {1 if status['mode'] != 'none' else 0}",
-        "",
-    ])
+    body = "\n".join(
+        [
+            "# HELP demo_cpu_utilization_percent CPU used as a percentage of the container CPU limit",
+            "# TYPE demo_cpu_utilization_percent gauge",
+            f"demo_cpu_utilization_percent {probe.cpu_percent()}",
+            "# HELP demo_memory_utilization_percent Memory used as a percentage of the container memory limit",
+            "# TYPE demo_memory_utilization_percent gauge",
+            f"demo_memory_utilization_percent {probe.memory_percent()}",
+            "# HELP demo_memory_used_bytes Resident memory of the container",
+            "# TYPE demo_memory_used_bytes gauge",
+            f"demo_memory_used_bytes {probe.memory_bytes()}",
+            "# HELP demo_requests_total Requests served since process start",
+            "# TYPE demo_requests_total counter",
+            f"demo_requests_total {counters.requests_total}",
+            "# HELP demo_requests_failed_total Requests that returned 5xx since process start",
+            "# TYPE demo_requests_failed_total counter",
+            f"demo_requests_failed_total {counters.requests_failed}",
+            "# HELP demo_request_latency_p95_seconds 95th percentile latency over the recent window",
+            "# TYPE demo_request_latency_p95_seconds gauge",
+            f"demo_request_latency_p95_seconds {round(counters.p95(), 5)}",
+            "# HELP demo_process_start_time_seconds Unix start time of this process",
+            "# TYPE demo_process_start_time_seconds gauge",
+            f"demo_process_start_time_seconds {PROCESS_START_TIME}",
+            "# HELP demo_reported_restart_count Restarts this container has observed",
+            "# TYPE demo_reported_restart_count counter",
+            f"demo_reported_restart_count {status['restart_count']}",
+            "# HELP demo_chaos_active 1 when a chaos mode is engaged",
+            "# TYPE demo_chaos_active gauge",
+            f"demo_chaos_active {1 if status['mode'] != 'none' else 0}",
+            "",
+        ]
+    )
     return PlainTextResponse(body, media_type="text/plain; version=0.0.4")
 
 

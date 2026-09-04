@@ -132,12 +132,12 @@ class TestHealth:
 
 class TestCostModel:
     def test_vm_cost_matches_the_rate_card(self, cost_model, inventory):
-        resource = inventory.get("azure-vm-web-01")   # 8 vCPU, 32 GiB, 256 GB
+        resource = inventory.get("azure-vm-web-01")  # 8 vCPU, 32 GiB, 256 GB
         estimate = cost_model.estimate(resource)
         expected = (
-            8 * 0.0415 * 730       # vCPU
-            + 32 * 0.0056 * 730    # memory
-            + 256 * 0.088          # disk
+            8 * 0.0415 * 730  # vCPU
+            + 32 * 0.0056 * 730  # memory
+            + 256 * 0.088  # disk
         )
         assert estimate["monthly_cost"] == pytest.approx(expected, rel=0.001)
         assert estimate["hourly_cost"] == pytest.approx(expected / 730, rel=0.01)
@@ -182,7 +182,7 @@ class TestCostModel:
         assert result["waste_monthly"] == result["monthly_cost"]
 
     def test_resize_saves_money(self, cost_model, inventory):
-        resource = inventory.get("azure-vm-batch-02")   # 16 vCPU / 128 GiB
+        resource = inventory.get("azure-vm-batch-02")  # 16 vCPU / 128 GiB
         delta = cost_model.resize_saving(resource, 4, 32)
         assert delta["monthly_saving"] > 0
         assert delta["proposed_monthly"] < delta["current_monthly"]
@@ -195,10 +195,14 @@ class TestCostModel:
         assert resource.spec == before
 
     def test_fleet_rollup_reconciles(self, cost_model, inventory):
-        utilization = {r.id: {"cpu_utilization": 50.0, "memory_utilization": 50.0} for r in inventory}
+        utilization = {
+            r.id: {"cpu_utilization": 50.0, "memory_utilization": 50.0} for r in inventory
+        }
         fleet = cost_model.fleet(inventory.resources, utilization)
         assert fleet["total_monthly"] == pytest.approx(
             sum(r["monthly_cost"] for r in fleet["resources"]), rel=0.001
         )
-        assert sum(fleet["by_provider"].values()) == pytest.approx(fleet["total_monthly"], rel=0.001)
+        assert sum(fleet["by_provider"].values()) == pytest.approx(
+            fleet["total_monthly"], rel=0.001
+        )
         assert fleet["total_annual"] == pytest.approx(fleet["total_monthly"] * 12, rel=0.001)

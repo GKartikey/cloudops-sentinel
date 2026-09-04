@@ -36,7 +36,9 @@ class TestAlertEngine:
         events: list[tuple[str, str]] = []
         rules, resolve_after = load_rules(rules_config)
         engine = AlertEngine(
-            store, rules, resolve_after,
+            store,
+            rules,
+            resolve_after,
             sinks=[lambda alert, event: events.append((alert["rule"], event))],
         )
         for ts in (1000.0, 1070.0, 1080.0, 1090.0, 1100.0):
@@ -136,7 +138,7 @@ class TestRecommendationEngine:
         finding, not "shrink it"), so a fleet pinned at one utilisation can only
         ever produce one of them.
         """
-        window = self._window(inventory, 25.0, 30.0)      # over-provisioned band
+        window = self._window(inventory, 25.0, 30.0)  # over-provisioned band
         window["azure-vm-batch-02"]["cpu_utilization"] = [5.0] * 60
         window["azure-vm-batch-02"]["memory_utilization"] = [9.0] * 60
         findings = engine.analyse(inventory.resources, window, {})
@@ -196,8 +198,10 @@ class TestRecommendationEngine:
     def test_public_database_is_a_critical_finding(self, engine, inventory):
         findings = engine.analyse(inventory.resources, self._window(inventory), {})
         rds = [
-            f for f in findings
-            if f["resource_id"] == "aws-rds-analytics" and f["category"] == "suspicious_configuration"
+            f
+            for f in findings
+            if f["resource_id"] == "aws-rds-analytics"
+            and f["category"] == "suspicious_configuration"
         ]
         assert rds and rds[0]["severity"] == "critical"
 
@@ -226,38 +230,46 @@ class TestStore:
         assert store.recent_values("r1", "cpu_utilization", 0) == [50.0]
 
     def test_latest_returns_the_newest_per_series(self, store):
-        store.insert_samples([
-            (100.0, "r1", "cpu_utilization", 10.0),
-            (200.0, "r1", "cpu_utilization", 20.0),
-            (150.0, "r1", "memory_utilization", 60.0),
-        ])
+        store.insert_samples(
+            [
+                (100.0, "r1", "cpu_utilization", 10.0),
+                (200.0, "r1", "cpu_utilization", 20.0),
+                (150.0, "r1", "memory_utilization", 60.0),
+            ]
+        )
         latest = store.latest_samples()
         assert latest["r1"]["cpu_utilization"] == (20.0, 200.0)
         assert latest["r1"]["memory_utilization"] == (60.0, 150.0)
 
     def test_window_samples_are_ordered_oldest_first(self, store):
-        store.insert_samples([
-            (300.0, "r1", "cpu_utilization", 3.0),
-            (100.0, "r1", "cpu_utilization", 1.0),
-            (200.0, "r1", "cpu_utilization", 2.0),
-        ])
+        store.insert_samples(
+            [
+                (300.0, "r1", "cpu_utilization", 3.0),
+                (100.0, "r1", "cpu_utilization", 1.0),
+                (200.0, "r1", "cpu_utilization", 2.0),
+            ]
+        )
         series = store.window_samples(0)["r1"]["cpu_utilization"]
         assert [v for _, v in series] == [1.0, 2.0, 3.0]
 
     def test_pruning_enforces_retention(self, store):
-        store.insert_samples([
-            (100.0, "r1", "cpu_utilization", 1.0),
-            (900.0, "r1", "cpu_utilization", 2.0),
-        ])
+        store.insert_samples(
+            [
+                (100.0, "r1", "cpu_utilization", 1.0),
+                (900.0, "r1", "cpu_utilization", 2.0),
+            ]
+        )
         store.prune(500.0)
         assert store.recent_values("r1", "cpu_utilization", 0) == [2.0]
 
     def test_log_search_filters(self, store):
-        store.insert_logs([
-            (100.0, "r1", "svc", "ERROR", "database timeout", {"a": 1}),
-            (101.0, "r1", "svc", "INFO", "heartbeat", {}),
-            (102.0, "r2", "svc", "ERROR", "disk full", {}),
-        ])
+        store.insert_logs(
+            [
+                (100.0, "r1", "svc", "ERROR", "database timeout", {"a": 1}),
+                (101.0, "r1", "svc", "INFO", "heartbeat", {}),
+                (102.0, "r2", "svc", "ERROR", "disk full", {}),
+            ]
+        )
         assert len(store.search_logs(0, level="ERROR")) == 2
         assert len(store.search_logs(0, resource_id="r2")) == 1
         assert len(store.search_logs(0, contains="timeout")) == 1
@@ -268,10 +280,16 @@ class TestStore:
         assert store.search_logs(0)[0]["context"]["duration_ms"] == 812
 
     def test_incidents_expire(self, store):
-        store.insert_incident({
-            "id": "inc-1", "scenario": "cpu_spike", "resource_id": "r1",
-            "started_at": 100.0, "ends_at": 200.0, "status": "active",
-        })
+        store.insert_incident(
+            {
+                "id": "inc-1",
+                "scenario": "cpu_spike",
+                "resource_id": "r1",
+                "started_at": 100.0,
+                "ends_at": 200.0,
+                "status": "active",
+            }
+        )
         assert len(store.active_incidents(150.0)) == 1
         store.expire_incidents(300.0)
         assert store.active_incidents(300.0) == []

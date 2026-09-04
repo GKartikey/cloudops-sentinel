@@ -130,20 +130,28 @@ class TestSimulator:
         bystander = inventory.get("azure-vm-web-01")
         now = 1_700_000_000.0
         incident = {
-            "id": "inc-test", "scenario": "cpu_spike", "resource_id": target.id,
-            "started_at": now, "ends_at": now + 300, "magnitude": 1.0,
+            "id": "inc-test",
+            "scenario": "cpu_spike",
+            "resource_id": target.id,
+            "started_at": now,
+            "ends_at": now + 300,
+            "magnitude": 1.0,
         }
-        assert simulator.sample(bystander, "cpu_utilization", now + 60, [incident]) == pytest.approx(
-            simulator.sample(bystander, "cpu_utilization", now + 60)
-        )
+        assert simulator.sample(
+            bystander, "cpu_utilization", now + 60, [incident]
+        ) == pytest.approx(simulator.sample(bystander, "cpu_utilization", now + 60))
 
     def test_ramped_incident_grows_over_time(self, simulator, inventory):
         """A memory leak must look like a leak, not a step change."""
         resource = inventory.get("aws-ec2-api-01")
         now = 1_700_000_000.0
         incident = {
-            "id": "inc-leak", "scenario": "memory_leak", "resource_id": resource.id,
-            "started_at": now, "ends_at": now + 600, "magnitude": 1.0,
+            "id": "inc-leak",
+            "scenario": "memory_leak",
+            "resource_id": resource.id,
+            "started_at": now,
+            "ends_at": now + 600,
+            "magnitude": 1.0,
         }
         early = simulator.sample(resource, "memory_utilization", now + 30, [incident])
         late = simulator.sample(resource, "memory_utilization", now + 570, [incident])
@@ -153,8 +161,12 @@ class TestSimulator:
         resource = inventory.get("aws-ec2-api-01")
         now = 1_700_000_000.0
         incident = {
-            "id": "inc-out", "scenario": "outage", "resource_id": resource.id,
-            "started_at": now, "ends_at": now + 240, "magnitude": 1.0,
+            "id": "inc-out",
+            "scenario": "outage",
+            "resource_id": resource.id,
+            "started_at": now,
+            "ends_at": now + 240,
+            "magnitude": 1.0,
         }
         assert simulator.sample(resource, "availability", now + 60, [incident]) == 0.0
 

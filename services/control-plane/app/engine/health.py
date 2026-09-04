@@ -143,9 +143,7 @@ def evaluate_fleet(
     for row in rows:
         counts[row["status"]] = counts.get(row["status"], 0) + 1
 
-    scored = [
-        r["score"] for r in rows if r["status"] not in ("unknown", "not_monitored")
-    ]
+    scored = [r["score"] for r in rows if r["status"] not in ("unknown", "not_monitored")]
     fleet_score = round(sum(scored) / len(scored), 1) if scored else 0.0
 
     # The fleet is only as healthy as its worst production resource: one

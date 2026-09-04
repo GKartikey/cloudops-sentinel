@@ -260,8 +260,11 @@ def list_incidents(
 async def start_incident(body: IncidentRequest, ctx=Depends(get_state)) -> dict[str, Any]:
     try:
         incident = await ctx.incidents.start(
-            body.scenario, body.resource_id, body.duration_seconds,
-            body.magnitude, body.note,
+            body.scenario,
+            body.resource_id,
+            body.duration_seconds,
+            body.magnitude,
+            body.note,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -271,9 +274,7 @@ async def start_incident(body: IncidentRequest, ctx=Depends(get_state)) -> dict[
 @router.delete("/incidents/{incident_id}", tags=["incidents"], dependencies=[WriteAuth])
 async def stop_incident(incident_id: str, ctx=Depends(get_state)) -> dict[str, Any]:
     if not await ctx.incidents.stop(incident_id):
-        raise HTTPException(
-            status_code=404, detail=f"no active incident with id {incident_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"no active incident with id {incident_id}")
     return {"cancelled": True, "incident_id": incident_id}
 
 
@@ -310,16 +311,18 @@ def overview(ctx=Depends(get_state)) -> dict[str, Any]:
     for resource in ctx.inventory:
         h = health_by_resource.get(resource.id, {})
         c = cost_by_resource.get(resource.id, {})
-        rows.append({
-            **resource.to_dict(),
-            "status": h.get("status", "unknown"),
-            "score": h.get("score", 0),
-            "reasons": h.get("reasons", []),
-            "metrics": h.get("metrics", {}),
-            "monthly_cost": c.get("monthly_cost", 0.0),
-            "waste_monthly": c.get("waste_monthly", 0.0),
-            "efficiency": c.get("efficiency", 0.0),
-        })
+        rows.append(
+            {
+                **resource.to_dict(),
+                "status": h.get("status", "unknown"),
+                "score": h.get("score", 0),
+                "reasons": h.get("reasons", []),
+                "metrics": h.get("metrics", {}),
+                "monthly_cost": c.get("monthly_cost", 0.0),
+                "waste_monthly": c.get("waste_monthly", 0.0),
+                "efficiency": c.get("efficiency", 0.0),
+            }
+        )
 
     return {
         "ts": now,

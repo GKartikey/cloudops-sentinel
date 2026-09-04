@@ -47,7 +47,7 @@ log = get_logger("cloudops.collector")
 LIVE_GAUGE_MAP = {
     "demo_cpu_utilization_percent": "cpu_utilization",
     "demo_memory_utilization_percent": "memory_utilization",
-    "demo_request_latency_p95_seconds": "latency_p95_ms",   # scaled below
+    "demo_request_latency_p95_seconds": "latency_p95_ms",  # scaled below
 }
 
 
@@ -185,7 +185,10 @@ class Collector:
                     *(self._scrape(r, now, incidents) for r in live),
                     return_exceptions=True,
                 )
-                for resource, result in zip(live, results):
+                # strict=True: asyncio.gather preserves input order and length,
+                # so a mismatch here would mean results were silently dropped
+                # and telemetry attributed to the wrong resource.
+                for resource, result in zip(live, results, strict=True):
                     if isinstance(result, BaseException):
                         log.warning(
                             "scrape task failed",
@@ -220,9 +223,7 @@ class Collector:
                 latest, {r.id: r.name for r in self.inventory}, now, samples
             )
             for alert in alert_result["fired"]:
-                prom.ALERTS_FIRED.labels(
-                    rule=alert["rule"], severity=alert["severity"]
-                ).inc()
+                prom.ALERTS_FIRED.labels(rule=alert["rule"], severity=alert["severity"]).inc()
 
             self._publish(latest, fleet_health, incidents, now)
 
@@ -274,8 +275,13 @@ class Collector:
             prom.SCRAPE_FAILURES.labels(resource=resource.id).inc()
             log.warning(
                 "live target unreachable",
-                extra={"context": {"resource_id": resource.id,
-                                   "endpoint": resource.endpoint, "error": str(exc)}},
+                extra={
+                    "context": {
+                        "resource_id": resource.id,
+                        "endpoint": resource.endpoint,
+                        "error": str(exc),
+                    }
+                },
             )
             rows.append((now, resource.id, "availability", 0.0))
             rows.append((now, resource.id, "error_rate", 1.0))
@@ -308,8 +314,7 @@ class Collector:
                     d_total, d_failed = max(total, 0.0), max(failed, 0.0)
                 rows.append((now, resource.id, "requests_per_second", max(d_total / dt, 0.0)))
                 rows.append(
-                    (now, resource.id, "error_rate",
-                     (d_failed / d_total) if d_total > 0 else 0.0)
+                    (now, resource.id, "error_rate", (d_failed / d_total) if d_total > 0 else 0.0)
                 )
             self._counter_state[resource.id] = {"ts": now, "total": total, "failed": failed}
 
@@ -322,8 +327,12 @@ class Collector:
                 self._restart_counts[resource.id] = self._restart_counts.get(resource.id, 0) + 1
                 log.warning(
                     "restart detected on live target",
-                    extra={"context": {"resource_id": resource.id,
-                                       "restart_count": self._restart_counts[resource.id]}},
+                    extra={
+                        "context": {
+                            "resource_id": resource.id,
+                            "restart_count": self._restart_counts[resource.id],
+                        }
+                    },
                 )
             self._start_times[resource.id] = start_time
         rows.append(
@@ -363,14 +372,16 @@ class Collector:
         for entry in entries if isinstance(entries, list) else []:
             ts = float(entry.get("ts", now))
             newest = max(newest, ts)
-            out.append((
-                ts,
-                resource.id,
-                entry.get("service", resource.name),
-                str(entry.get("level", "INFO")).upper(),
-                str(entry.get("message", "")),
-                entry.get("context") or {},
-            ))
+            out.append(
+                (
+                    ts,
+                    resource.id,
+                    entry.get("service", resource.name),
+                    str(entry.get("level", "INFO")).upper(),
+                    str(entry.get("message", "")),
+                    entry.get("context") or {},
+                )
+            )
         self._log_cursor[resource.id] = newest
         return out
 
@@ -406,28 +417,63 @@ class Collector:
             context["incident"] = active[0]["scenario"]
 
         if available < 0.5:
-            return (ts, resource.id, resource.name, "ERROR",
-                    "health probe failed: target not responding", context)
+            return (
+                ts,
+                resource.id,
+                resource.name,
+                "ERROR",
+                "health probe failed: target not responding",
+                context,
+            )
         if err > 0.15:
-            return (ts, resource.id, resource.name, "ERROR",
-                    f"upstream returned 5xx for {err:.1%} of requests", context)
+            return (
+                ts,
+                resource.id,
+                resource.name,
+                "ERROR",
+                f"upstream returned 5xx for {err:.1%} of requests",
+                context,
+            )
         if mem > 92:
-            return (ts, resource.id, resource.name, "ERROR",
-                    f"memory pressure critical at {mem:.1f}%, GC thrashing", context)
+            return (
+                ts,
+                resource.id,
+                resource.name,
+                "ERROR",
+                f"memory pressure critical at {mem:.1f}%, GC thrashing",
+                context,
+            )
         if cpu > 92:
-            return (ts, resource.id, resource.name, "WARN",
-                    f"cpu saturated at {cpu:.1f}%, request queue growing", context)
+            return (
+                ts,
+                resource.id,
+                resource.name,
+                "WARN",
+                f"cpu saturated at {cpu:.1f}%, request queue growing",
+                context,
+            )
         if err > 0.03:
-            return (ts, resource.id, resource.name, "WARN",
-                    f"elevated error rate {err:.2%}", context)
+            return (
+                ts,
+                resource.id,
+                resource.name,
+                "WARN",
+                f"elevated error rate {err:.2%}",
+                context,
+            )
         if latency > 800:
-            return (ts, resource.id, resource.name, "WARN",
-                    f"p95 latency {latency:.0f}ms exceeds objective", context)
+            return (
+                ts,
+                resource.id,
+                resource.name,
+                "WARN",
+                f"p95 latency {latency:.0f}ms exceeds objective",
+                context,
+            )
         # Heartbeat, but only occasionally - one INFO line per resource per
         # scrape would be 90% of the log volume and 0% of the value.
         if int(ts) % 300 < self.settings.collect_interval_seconds:
-            return (ts, resource.id, resource.name, "INFO",
-                    "periodic health summary", context)
+            return (ts, resource.id, resource.name, "INFO", "periodic health summary", context)
         return None
 
     # ------------------------------------------------------------ analysis
@@ -437,7 +483,8 @@ class Collector:
         for anomaly in found:
             # Dedupe: one sustained incident is one anomaly, not one per tick.
             if self.store.anomaly_exists_recently(
-                anomaly["resource_id"], anomaly["metric"],
+                anomaly["resource_id"],
+                anomaly["metric"],
                 now - self.detector.cooldown_seconds,
             ):
                 continue
@@ -451,12 +498,9 @@ class Collector:
         return recorded
 
     # ------------------------------------------------------------- publish
-    def _publish(
-        self, latest: dict, fleet_health: dict, incidents: list[dict], now: float
-    ) -> None:
+    def _publish(self, latest: dict, fleet_health: dict, incidents: list[dict], now: float) -> None:
         utilization = {
-            rid: {m: v for m, (v, _) in metrics.items()}
-            for rid, metrics in latest.items()
+            rid: {m: v for m, (v, _) in metrics.items()} for rid, metrics in latest.items()
         }
         fleet_cost = self.cost.fleet(self.inventory.resources, utilization)
         cost_by_resource = {row["resource_id"]: row for row in fleet_cost["resources"]}
@@ -497,6 +541,6 @@ class Collector:
             await self.tick()
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
         log.info("collector stopped")

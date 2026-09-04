@@ -83,13 +83,16 @@ class Context:
             sinks.append(WebhookSink(settings.alert_webhook_url))
         self.alerts = AlertEngine(self.store, rules, resolve_after, sinks)
 
-        self.recommender = RecommendationEngine(
-            rules_config.get("recommendations", {}), self.cost
-        )
+        self.recommender = RecommendationEngine(rules_config.get("recommendations", {}), self.cost)
         self.incidents = IncidentManager(self.store, self.inventory)
         self.collector = Collector(
-            self.store, self.inventory, self.simulator, self.detector,
-            self.alerts, self.cost, settings,
+            self.store,
+            self.inventory,
+            self.simulator,
+            self.detector,
+            self.alerts,
+            self.cost,
+            settings,
         )
 
         self._stop = asyncio.Event()
@@ -97,13 +100,15 @@ class Context:
 
         log.info(
             "context initialised",
-            extra={"context": {
-                "resources": len(self.inventory),
-                "live_targets": len(self.inventory.live),
-                "alert_rules": len(rules),
-                "alert_sinks": [getattr(s, "name", "?") for s in sinks],
-                "db": str(settings.db_path),
-            }},
+            extra={
+                "context": {
+                    "resources": len(self.inventory),
+                    "live_targets": len(self.inventory.live),
+                    "alert_rules": len(rules),
+                    "alert_sinks": [getattr(s, "name", "?") for s in sinks],
+                    "db": str(settings.db_path),
+                }
+            },
         )
 
     def build_recommendations(self, minutes: int = 60) -> list[dict]:
@@ -135,7 +140,7 @@ class Context:
         if self._task:
             try:
                 await asyncio.wait_for(self._task, timeout=10)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
         await self.collector.stop()
         self.store.close()
@@ -232,9 +237,7 @@ async def observability_middleware(request: Request, call_next):
     duration = time.perf_counter() - started
     route = request.scope.get("route")
     path_label = route.path if route else template
-    prom.HTTP_REQUESTS.labels(
-        method=request.method, path=path_label, status=str(status_code)
-    ).inc()
+    prom.HTTP_REQUESTS.labels(method=request.method, path=path_label, status=str(status_code)).inc()
     prom.HTTP_LATENCY.labels(method=request.method, path=path_label).observe(duration)
 
     response.headers["x-correlation-id"] = correlation
@@ -247,14 +250,16 @@ async def observability_middleware(request: Request, call_next):
     if not request.url.path.startswith(("/metrics", "/healthz", "/static")):
         log.info(
             "request",
-            extra={"context": {
-                "event_type": "http_access",
-                "method": request.method,
-                "path": request.url.path,
-                "status": status_code,
-                "duration_ms": round(duration * 1000, 2),
-                "client": request.client.host if request.client else "unknown",
-            }},
+            extra={
+                "context": {
+                    "event_type": "http_access",
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": status_code,
+                    "duration_ms": round(duration * 1000, 2),
+                    "client": request.client.host if request.client else "unknown",
+                }
+            },
         )
     return response
 

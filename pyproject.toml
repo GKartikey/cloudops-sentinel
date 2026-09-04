@@ -1,0 +1,49 @@
+# Tooling configuration.
+#
+# There is no package to build here - the services are containerised and each
+# has its own requirements.txt. This file exists so that ruff and pytest read
+# the same settings locally and in CI, rather than CI applying defaults the
+# developer never sees.
+
+[tool.ruff]
+# 100 rather than the default 88. The code carries a lot of explanatory prose
+# in comments and docstrings, and 88 forces those into ragged two-word lines
+# that are harder to read than the thing they explain.
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # import sorting
+    "UP",   # pyupgrade - keep to modern syntax for the target version
+    "B",    # flake8-bugbear - likely bugs, not style
+    "C4",   # comprehension simplifications
+    "SIM",  # simplifications
+]
+ignore = [
+    "E501",   # line length is enforced by the formatter, not the linter
+    "B008",   # FastAPI's Depends() in a default argument is the framework idiom
+    "SIM105", # contextlib.suppress is not clearer than a two-line try/except here
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import inside functions deliberately, so the path fixture in conftest
+# has run before the application package is resolved.
+"tests/*" = ["E402", "F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+# Keep formatting inside docstrings alone: several contain ASCII diagrams and
+# aligned tables that a formatter would helpfully destroy.
+docstring-code-format = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:app.*"]

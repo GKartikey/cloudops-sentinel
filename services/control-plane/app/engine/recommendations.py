@@ -21,7 +21,8 @@ plus orphaned_resource, storage_tiering, commitment and scheduling analysers.
 from __future__ import annotations
 
 import statistics
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from .inventory import COMPUTE_TYPES, Resource
 
@@ -171,7 +172,7 @@ class RecommendationEngine:
                 {"attached": False, "sku": resource.sku, "monthly_cost": monthly},
                 monthly_saving=monthly,
                 confidence="high",
-                risk="medium",   # deleting a disk is irreversible without a snapshot
+                risk="medium",  # deleting a disk is irreversible without a snapshot
             )
         ]
 
@@ -278,7 +279,7 @@ class RecommendationEngine:
                 },
                 monthly_saving=saving,
                 confidence="high",
-                risk="high",     # decommissioning needs an owner sign-off
+                risk="high",  # decommissioning needs an owner sign-off
                 effort="medium",
             )
         ]
@@ -359,7 +360,9 @@ class RecommendationEngine:
             )
         ]
 
-    def _suspicious_configuration(self, resource: Resource, stats: dict, health: dict) -> list[dict]:
+    def _suspicious_configuration(
+        self, resource: Resource, stats: dict, health: dict
+    ) -> list[dict]:
         """Posture checks. Each maps to a real CIS / Well-Architected control."""
         config = resource.config or {}
         issues: list[dict] = []
@@ -368,47 +371,77 @@ class RecommendationEngine:
             issues.append({"severity": severity, "issue": issue, "control": control, "fix": fix})
 
         if config.get("encryption_at_rest") is False:
-            add("critical", "Data is stored unencrypted at rest",
+            add(
+                "critical",
+                "Data is stored unencrypted at rest",
                 "CIS / encryption-at-rest",
-                "Enable platform-managed disk or storage encryption and re-key.")
+                "Enable platform-managed disk or storage encryption and re-key.",
+            )
         if config.get("public_access") is True:
-            add("critical", "Anonymous public read access is enabled on a storage container",
+            add(
+                "critical",
+                "Anonymous public read access is enabled on a storage container",
                 "CIS / no public buckets",
-                "Disable anonymous access; issue time-boxed SAS tokens or presigned URLs.")
+                "Disable anonymous access; issue time-boxed SAS tokens or presigned URLs.",
+            )
         if config.get("public_ip") is True and resource.type == "managed_database":
-            add("critical", "Database is reachable from the public internet",
+            add(
+                "critical",
+                "Database is reachable from the public internet",
                 "least privilege / network isolation",
-                "Move it behind a private endpoint or VPC-only subnet and drop the public IP.")
+                "Move it behind a private endpoint or VPC-only subnet and drop the public IP.",
+            )
         if config.get("public_ip") is True and config.get("open_ports"):
             ports = config["open_ports"]
-            add("critical", f"Public IP with management ports {ports} exposed",
+            add(
+                "critical",
+                f"Public IP with management ports {ports} exposed",
                 "least privilege / no management ports on the internet",
                 "Remove the public IP and reach the host through a bastion, "
-                "Azure Bastion, or SSM Session Manager instead.")
+                "Azure Bastion, or SSM Session Manager instead.",
+            )
         if config.get("https_only") is False:
-            add("high", "Plaintext HTTP is accepted",
+            add(
+                "high",
+                "Plaintext HTTP is accepted",
                 "encryption-in-transit",
-                "Force HTTPS-only and set a minimum TLS version of 1.2.")
+                "Force HTTPS-only and set a minimum TLS version of 1.2.",
+            )
         if config.get("managed_identity") is False:
-            add("high", "Authenticates with static credentials instead of a workload identity",
+            add(
+                "high",
+                "Authenticates with static credentials instead of a workload identity",
                 "no long-lived secrets",
                 "Switch to a managed identity / IAM role for service accounts so no "
-                "secret has to be stored or rotated at all.")
+                "secret has to be stored or rotated at all.",
+            )
         if config.get("diagnostic_logs") is False:
-            add("medium", "Diagnostic logging is disabled",
+            add(
+                "medium",
+                "Diagnostic logging is disabled",
                 "auditability",
                 "Enable resource logs and ship them to the central workspace; without "
-                "them an incident on this resource cannot be reconstructed.")
-        if config.get("backup_enabled") is False and resource.environment == "prod" \
-                and resource.type in ("virtual_machine", "managed_database"):
-            add("high", "Production resource has no backup configured",
+                "them an incident on this resource cannot be reconstructed.",
+            )
+        if (
+            config.get("backup_enabled") is False
+            and resource.environment == "prod"
+            and resource.type in ("virtual_machine", "managed_database")
+        ):
+            add(
+                "high",
+                "Production resource has no backup configured",
                 "recoverability",
-                "Attach a backup policy with a retention period that meets the RPO.")
+                "Attach a backup policy with a retention period that meets the RPO.",
+            )
         if resource.owner in ("unassigned", "", None):
-            add("medium", "Resource has no owner tag",
+            add(
+                "medium",
+                "Resource has no owner tag",
                 "cost accountability",
                 "Tag with owner and cost_center; untagged resources are the ones "
-                "nobody dares delete and everybody keeps paying for.")
+                "nobody dares delete and everybody keeps paying for.",
+            )
 
         if not issues:
             return []
@@ -559,12 +592,14 @@ class RecommendationEngine:
                 {
                     "cpu_p95": round(cpu["p95"], 2),
                     "monthly_cost": monthly,
-                    "discount_pct": round(self.cost.commitments.get("reserved_1yr_discount", 0) * 100),
+                    "discount_pct": round(
+                        self.cost.commitments.get("reserved_1yr_discount", 0) * 100
+                    ),
                 },
                 monthly_saving=saving,
                 confidence="medium",
                 effort="low",
-                risk="medium",   # a commitment is a contractual lock-in
+                risk="medium",  # a commitment is a contractual lock-in
             )
         ]
 
